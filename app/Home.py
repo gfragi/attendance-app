@@ -130,26 +130,58 @@ def df_from_query(q):
     return df
 
 def group_df(df: pd.DataFrame, freq: str = "D"):
+    """
+    freq: "D" | "W-MON" | "MS"
+    Returns (grouped, pivot)
+    """
     if df.empty:
         return df, df
-    # time buckets
-    df["day"] = pd.to_datetime(df["check_in_at"]).dt.floor(freq)
-    # totals per course per bucket
-    grouped = (df
-        .groupby(["course_code","course_title","day"])
-        .agg(
-            check_ins=("student_email","count"),
-            unique_students=("student_email","nunique"),
-            sessions=("session_id","nunique"),
-        )
-        .reset_index()
-        .sort_values(["day","course_code"])
+
+    # Ensure datetime
+    ts = pd.to_datetime(df["check_in_at"], utc=False, errors="coerce")
+
+    # Compute bucket start time safely for non-fixed freqs
+    if freq == "D":
+        bucket = ts.dt.floor("D")
+    elif freq.startswith("W"):  # e.g., "W-MON"
+        bucket = ts.dt.to_period(freq).dt.start_time
+    elif freq in ("MS", "M"):
+        # "MS" = month start; "M" = month end -> normalize to month start for consistency
+        bucket = ts.dt.to_period("M").dt.start_time
+    else:
+        # Fallback: try floor; if it fails, default to day
+        try:
+            bucket = ts.dt.floor(freq)
+        except Exception:
+            bucket = ts.dt.floor("D")
+
+    df = df.copy()
+    df["bucket"] = bucket
+
+    grouped = (
+        df.groupby(["course_code", "course_title", "bucket"])
+          .agg(
+              check_ins=("student_email", "count"),
+              unique_students=("student_email", "nunique"),
+              sessions=("session_id", "nunique"),
+          )
+          .reset_index()
+          .sort_values(["bucket", "course_code"])
     )
-    # pivot for a per-day wide view
-    pivot = grouped.pivot_table(
-        index="day", columns="course_code", values="check_ins", aggfunc="sum", fill_value=0
-    ).sort_index()
+
+    pivot = (
+        grouped.pivot_table(
+            index="bucket",
+            columns="course_code",
+            values="check_ins",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .sort_index()
+    )
+
     return grouped, pivot
+
 
 def course_attendance_rates(df: pd.DataFrame):
     """
@@ -381,8 +413,12 @@ with tabs[1]:
         with date_col2:
             date_to = st.date_input("To date", value=pd.Timestamp.today().normalize() + pd.Timedelta(days=1))
         with grp_col:
-            bucket = st.selectbox("Group by", ["Day (D)", "Week (W-MON)", "Month (MS)"], index=0)
-
+            bucket = st.selectbox(
+            "Group by",
+            ["Day (D)", "Week (W-MON)", "Month (MS)"],
+            index=0,
+            key="instructor_groupby"
+        )
         freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
         freq = freq_map[bucket]
 
@@ -439,6 +475,9 @@ with tabs[2]:
     if admin_ok:
         db = get_db()
         ensure_demo_data(db)
+        st.session_state["user_role"] = "admin"
+        st.session_state["is_admin"] = True
+        st.success("Admin mode enabled for this session.")
 
         st.markdown("#### Users")
         with st.form("add_user_form"):
@@ -491,6 +530,12 @@ with tabs[2]:
 # Reports (quick global view)
 # ----------------------------------
 with tabs[3]:
+    # Admin-only guard
+    if not st.session_state.get("is_admin"):
+        st.subheader("Admin Reports")
+        st.info("Admins only. Please authenticate in the Admin Panel to access reports.")
+        st.stop()  # nothing else in this tab will render
+
     st.subheader("Admin Reports")
 
     db = get_db()
@@ -510,7 +555,12 @@ with tabs[3]:
     key="admin_to"
 )
     with c3:
-        bucket = st.selectbox("Group by", ["Day (D)", "Week (W-MON)", "Month (MS)"], index=0)
+        bucket = st.selectbox(
+    "Group by",
+    ["Day (D)", "Week (W-MON)", "Month (MS)"],
+    index=0,
+    key="admin_groupby"
+)
 
     freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
     freq = freq_map[bucket]
