@@ -16,8 +16,8 @@ import qrcode
 # -----------------------------
 # Config
 # -----------------------------
-APP_TITLE = "Centralized Attendance (Streamlit)"
-EMAIL_DOMAIN = "@hua"   # set to "@hua.gr" or your exact domain rule
+APP_TITLE = "Centralized Attendance for University Courses"
+EMAIL_DOMAIN = "@hua"   # set to "@hua.gr" or an exact domain rule
 SESSION_DEFAULT_MINUTES = 15
 
 # Switch to PostgreSQL by setting DATABASE_URL env var, e.g.:
@@ -83,6 +83,92 @@ Base.metadata.create_all(engine)
 # -----------------------------
 # Helpers
 # -----------------------------
+
+def get_report_base_query(db, instructor_email=None, course_ids=None, date_from=None, date_to=None):
+    q = (
+        db.query(
+            Course.code.label("course_code"),
+            Course.title.label("course_title"),
+            Session.id.label("session_id"),
+            Session.start_time.label("session_start"),
+            Attendance.student_name,
+            Attendance.student_email,
+            Attendance.created_at.label("check_in_at"),
+        )
+        .join(Session, Session.course_id == Course.id)
+        .join(Attendance, Attendance.session_id == Session.id)
+    )
+    # Instructor scoping
+    if instructor_email:
+        q = q.join(CourseInstructor, CourseInstructor.course_id == Course.id)\
+             .join(User, User.id == CourseInstructor.user_id)\
+             .filter(User.email == instructor_email)
+    # Filters
+    if course_ids:
+        q = q.filter(Course.id.in_(course_ids))
+    if date_from:
+        q = q.filter(Attendance.created_at >= date_from)
+    if date_to:
+        q = q.filter(Attendance.created_at < date_to)
+
+    return q
+
+def df_from_query(q):
+    rows = q.all()
+    if not rows:
+        return pd.DataFrame(columns=[
+            "course_code","course_title","session_id","session_start",
+            "student_name","student_email","check_in_at"
+        ])
+    df = pd.DataFrame(rows, columns=[
+        "course_code","course_title","session_id","session_start",
+        "student_name","student_email","check_in_at"
+    ])
+    LOCAL_TZ = "Europe/Athens"
+    df["session_start"] = pd.to_datetime(df["session_start"], utc=True).dt.tz_convert(LOCAL_TZ).dt.tz_localize(None)
+    df["check_in_at"]   = pd.to_datetime(df["check_in_at"],   utc=True).dt.tz_convert(LOCAL_TZ).dt.tz_localize(None)
+    return df
+
+def group_df(df: pd.DataFrame, freq: str = "D"):
+    if df.empty:
+        return df, df
+    # time buckets
+    df["day"] = pd.to_datetime(df["check_in_at"]).dt.floor(freq)
+    # totals per course per bucket
+    grouped = (df
+        .groupby(["course_code","course_title","day"])
+        .agg(
+            check_ins=("student_email","count"),
+            unique_students=("student_email","nunique"),
+            sessions=("session_id","nunique"),
+        )
+        .reset_index()
+        .sort_values(["day","course_code"])
+    )
+    # pivot for a per-day wide view
+    pivot = grouped.pivot_table(
+        index="day", columns="course_code", values="check_ins", aggfunc="sum", fill_value=0
+    ).sort_index()
+    return grouped, pivot
+
+def course_attendance_rates(df: pd.DataFrame):
+    """
+    Per course, per student: how many sessions attended vs total sessions of that course.
+    """
+    if df.empty:
+        return pd.DataFrame()
+    # total sessions per course
+    total_sessions = df.drop_duplicates(["course_code","session_id"])\
+                       .groupby("course_code")["session_id"].nunique().rename("total_sessions")
+    # sessions attended per student per course
+    attended = df.drop_duplicates(["course_code","session_id","student_email"])\
+                 .groupby(["course_code","student_email"])["session_id"].nunique().rename("attended_sessions")\
+                 .reset_index()
+    out = attended.merge(total_sessions, on="course_code")
+    out["attendance_rate_%"] = (out["attended_sessions"] / out["total_sessions"] * 100).round(1)
+    return out.sort_values(["course_code","attendance_rate_%"], ascending=[True, False])
+
+
 def to_aware_utc(dt):
     if dt is None:
         return None
@@ -285,6 +371,63 @@ with tabs[1]:
             else:
                 st.info("No past sessions yet.")
 
+
+        st.markdown("### 📊 Instructor Reports")
+
+        # Filters
+        date_col1, date_col2, grp_col = st.columns([1,1,1])
+        with date_col1:
+            date_from = st.date_input("From date", value=pd.Timestamp.today().normalize() - pd.Timedelta(days=30))
+        with date_col2:
+            date_to = st.date_input("To date", value=pd.Timestamp.today().normalize() + pd.Timedelta(days=1))
+        with grp_col:
+            bucket = st.selectbox("Group by", ["Day (D)", "Week (W-MON)", "Month (MS)"], index=0)
+
+        freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
+        freq = freq_map[bucket]
+
+        # Course multiselect (only instructor's courses)
+        course_ids_filter = [c.id for c in my_courses]
+        course_choice = st.multiselect(
+            "Courses",
+            options=my_courses,
+            format_func=lambda c: f"{c.code} — {c.title}",
+            default=my_courses
+        )
+        course_ids_sel = [c.id for c in course_choice]
+
+        if st.button("Run report"):
+            db = get_db()
+            q = get_report_base_query(
+                db,
+                instructor_email=instructor_email,
+                course_ids=course_ids_sel or course_ids_filter,
+                date_from=pd.Timestamp(date_from).tz_localize("UTC"),
+                date_to=pd.Timestamp(date_to).tz_localize("UTC"),
+            )
+            df = df_from_query(q)
+            st.subheader("Raw check-ins (sortable)")
+            st.dataframe(df.sort_values("check_in_at", ascending=False), use_container_width=True)
+            csv = df.to_csv(index=False).encode()
+            st.download_button("Download CSV (raw)", csv, file_name="instructor_checkins.csv", mime="text/csv")
+
+            st.subheader(f"Aggregates per {bucket.split()[0]} & course")
+            grouped, pivot = group_df(df, freq=freq)
+            st.dataframe(grouped, use_container_width=True)
+            g_csv = grouped.to_csv(index=False).encode()
+            st.download_button("Download CSV (grouped)", g_csv, file_name="instructor_grouped.csv", mime="text/csv")
+
+            st.subheader("Pivot (rows=time bucket, columns=course_code)")
+            st.dataframe(pivot, use_container_width=True)
+            p_csv = pivot.to_csv().encode()
+            st.download_button("Download CSV (pivot)", p_csv, file_name="instructor_pivot.csv", mime="text/csv")
+
+            st.subheader("Per-student attendance rate (%) per course")
+            rates = course_attendance_rates(df)
+            st.dataframe(rates, use_container_width=True)
+            r_csv = rates.to_csv(index=False).encode()
+            st.download_button("Download CSV (rates)", r_csv, file_name="instructor_rates.csv", mime="text/csv")
+
 # ----------------------------------
 # Admin Panel
 # ----------------------------------
@@ -348,24 +491,66 @@ with tabs[2]:
 # Reports (quick global view)
 # ----------------------------------
 with tabs[3]:
-    st.subheader("Reports")
+    st.subheader("Admin Reports")
+
     db = get_db()
-    q = db.query(Attendance).join(Session, Attendance.session_id == Session.id).join(Course, Session.course_id == Course.id)
-    rows = q.all()
-    if rows:
-        data = []
-        for r in rows:
-            data.append({
-                "course": r.session.course.code,
-                "course_title": r.session.course.title,
-                "session_id": r.session.id,
-                "check_in_at": r.created_at.astimezone().strftime('%Y-%m-%d %H:%M:%S'),
-                "student_name": r.student_name,
-                "student_email": r.student_email,
-            })
-        df = pd.DataFrame(data).sort_values(by=["course", "session_id", "check_in_at"])
-        st.dataframe(df)
-        csv = df.to_csv(index=False).encode()
-        st.download_button("Download all attendance (CSV)", data=csv, file_name="attendance_all.csv", mime="text/csv")
-    else:
-        st.info("No attendance records yet.")
+    all_courses = db.query(Course).order_by(Course.code.asc()).all()
+
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1:
+        date_from = st.date_input(
+    "From date",
+    value=pd.Timestamp.today().normalize() - pd.Timedelta(days=30),
+    key="admin_from"
+)
+    with c2:
+        date_to = st.date_input(
+    "To date",
+    value=pd.Timestamp.today().normalize() + pd.Timedelta(days=1),
+    key="admin_to"
+)
+    with c3:
+        bucket = st.selectbox("Group by", ["Day (D)", "Week (W-MON)", "Month (MS)"], index=0)
+
+    freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
+    freq = freq_map[bucket]
+
+    course_choice = st.multiselect(
+        "Courses",
+        options=all_courses,
+        format_func=lambda c: f"{c.code} — {c.title}",
+        default=all_courses
+    )
+    course_ids_sel = [c.id for c in course_choice] if course_choice else None
+
+    if st.button("Run admin report"):
+        q = get_report_base_query(
+            db,
+            instructor_email=None,  # admin sees all
+            course_ids=course_ids_sel,
+            date_from=pd.Timestamp(date_from).tz_localize("UTC"),
+            date_to=pd.Timestamp(date_to).tz_localize("UTC"),
+        )
+        df = df_from_query(q)
+
+        st.markdown("#### Raw")
+        st.dataframe(df.sort_values(["course_code","check_in_at"]), use_container_width=True)
+        st.download_button("Download CSV (raw)", df.to_csv(index=False).encode(),
+                           file_name="admin_checkins_raw.csv", mime="text/csv")
+
+        st.markdown("#### Aggregated per time bucket & course")
+        grouped, pivot = group_df(df, freq=freq)
+        st.dataframe(grouped, use_container_width=True)
+        st.download_button("Download CSV (grouped)", grouped.to_csv(index=False).encode(),
+                           file_name="admin_grouped.csv", mime="text/csv")
+
+        st.markdown("#### Pivot")
+        st.dataframe(pivot, use_container_width=True)
+        st.download_button("Download CSV (pivot)", pivot.to_csv().encode(),
+                           file_name="admin_pivot.csv", mime="text/csv")
+
+        st.markdown("#### Per-student attendance rate by course")
+        rates = course_attendance_rates(df)
+        st.dataframe(rates, use_container_width=True)
+        st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
+                           file_name="admin_rates.csv", mime="text/csv")
