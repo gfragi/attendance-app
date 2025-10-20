@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.dev
+    volumes:
+      - ./app:/app/app:rw
+      - ./.streamlit:/app/.streamlit:rw
+      - ./data:/app/data:rw
+    ports:
+      - "8080:8501"   # open http://localhost:8080
+    restart: unless-stopped
