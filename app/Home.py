@@ -9,8 +9,7 @@ import streamlit as st
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, UniqueConstraint, PrimaryKeyConstraint
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
 
 # -----------------------------
@@ -78,7 +77,6 @@ class Attendance(Base):
     created_at    = Column(DateTime, nullable=False)
     session       = relationship("Session", back_populates="attendance")
     __table_args__ = (UniqueConstraint('session_id', 'student_email', name='_unique_sess_email'),)
-    __table_args__ = (PrimaryKeyConstraint('session_id', 'student_email', name='pk_session_student'),)
 
 Base.metadata.create_all(engine)
 
@@ -430,7 +428,8 @@ with tabs[1]:
             "Courses",
             options=my_courses,
             format_func=lambda c: f"{c.code} — {c.title}",
-            default=my_courses
+            default=my_courses,
+            key="instructor_courses"
         )
         course_ids_sel = [c.id for c in course_choice]
 
@@ -571,7 +570,8 @@ with tabs[3]:
         "Courses",
         options=all_courses,
         format_func=lambda c: f"{c.code} — {c.title}",
-        default=all_courses
+        default=all_courses,
+        key="admin_courses"
     )
     course_ids_sel = [c.id for c in course_choice] if course_choice else None
 
