@@ -55,6 +55,7 @@ class CourseInstructor(Base):
     course      = relationship("Course", back_populates="instructors")
     user        = relationship("User", back_populates="teaches")
     __table_args__ = (UniqueConstraint('course_id', 'user_id', name='_course_inst_uc'),)
+    
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -77,6 +78,7 @@ class Attendance(Base):
     created_at    = Column(DateTime, nullable=False)
     session       = relationship("Session", back_populates="attendance")
     __table_args__ = (UniqueConstraint('session_id', 'student_email', name='_unique_sess_email'),)
+    __table_args__ = (PrimaryKeyConstraint('session_id', 'student_email', name='pk_session_student'),)
 
 Base.metadata.create_all(engine)
 
