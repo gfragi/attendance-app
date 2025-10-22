@@ -208,3 +208,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# env files
+.env*
+!.env.example
+!.env.dev.example
+!.env.prod.example
