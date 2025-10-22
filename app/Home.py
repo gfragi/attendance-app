@@ -439,7 +439,7 @@ with tabs[1]:
                         st.success("Session closed.")
                 with c2:
                     if st.button("Extend 10 minutes", key=f"extend_{sess.id}"):
-                        sess.expires_at = max(sess.expires_at, now_utc()) + timedelta(minutes=10)
+                        sess.expires_at = max(to_aware_utc(sess.expires_at), now_utc()) + timedelta(minutes=10)
                         db.commit()
                         st.success("Extended by 10 minutes.")
                 with c3:
