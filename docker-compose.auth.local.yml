@@ -1,32 +1,5 @@
 services:
   app:
-<<<<<<< HEAD
-    image: ghcr.io/gfragi/attendance-app:latest
-    env_file:
-      - ./.env.auth.local
-    volumes:
-      - ./data:/data
-    expose:
-      - "8501"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
-    env_file:
-      - ./.env.auth.local
-    command:
-      - --provider=google
-      - --http-address=0.0.0.0:4180
-      # forward to the app
-      - --upstream=http://app:8501
-      # restrict to HUA emails only
-      - --email-domain=hua.gr
-      # good defaults for local
-=======
     build: .
     env_file: [ ./.env.auth.local ]
     volumes: [ ./data:/data ]
@@ -47,7 +20,6 @@ services:
       - --upstream=http://app:8501
       - --email-domain=hua.gr
       - --redirect-url=http://localhost:8080/oauth2/callback
->>>>>>> 688ba12b429c02d3422d7a1deecd1dfcd14db822
       - --cookie-secure=false
       - --cookie-samesite=lax
       - --set-authorization-header=true
@@ -56,21 +28,7 @@ services:
       - --skip-jwt-bearer-tokens=true
       - --cookie-refresh=1h
       - --cookie-expire=8h
-<<<<<<< HEAD
-      # Optional: show sign-in UI if unauthenticated
-      # - --reverse-proxy=true
-    environment:
-      OAUTH2_PROXY_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      OAUTH2_PROXY_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET}
-    ports:
-      - "8080:4180"
-    depends_on:
-      app:
-        condition: service_healthy
-=======
     ports: [ "8080:4180" ]
     depends_on:
       app:
         condition: service_started
->>>>>>> 688ba12b429c02d3422d7a1deecd1dfcd14db822
