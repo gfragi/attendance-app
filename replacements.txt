@@ -1,0 +1,6 @@
+# redact Google OAuth client secrets (start with GOCSPX typically)
+regex:GOCSPX[a-zA-Z0-9_\-]+==?    REDACTED_GOOGLE_CLIENT_SECRET
+regex:GOCSPX[a-zA-Z0-9_\-]+       REDACTED_GOOGLE_CLIENT_SECRET
+
+# redact Google OAuth client IDs ending with .apps.googleusercontent.com
+regex:[0-9]+-[a-zA-Z0-9_\-]+\.apps\.googleusercontent\.com   REDACTED_GOOGLE_CLIENT_ID
