@@ -39,7 +39,7 @@ services:
       - --reverse-proxy=true
       # if issues persist, force cookie domain:
       # - --cookie-domain=attendances.ditapps.hua.gr
-    ports: [ "127.0.0.1:8080:4180" ]
+    ports: [ "10.100.59.105:8080:4180" ]
     depends_on:
       app:
         condition: service_started
