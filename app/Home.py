@@ -311,7 +311,7 @@ if u.get("email") and not u["email"].endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
 
-tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports"])
+tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports", "Help"])
 
 # ----------------------------------
 # Student public check-in (with token)
@@ -395,12 +395,10 @@ with tabs[1]:
                 format_func=lambda c: f"{c.code} — {c.title}"
             )
         with colB:
-            duration = st.number_input(
-                "Session duration (minutes)",
-                min_value=5, max_value=240, value=SESSION_DEFAULT_MINUTES
-            )
+            duration = st.number_input("Session duration (minutes)", min_value=5, max_value=240, value=SESSION_DEFAULT_MINUTES,
+                help="How long the QR/link accepts check-ins.")
 
-        if st.button("Open new attendance session"):
+        if st.button("Open new attendance session", help="Creates a timed session and QR/URL for students to scan."):
             token = gen_token()
             new_sess = Session(
                 course_id=course.id,
@@ -628,3 +626,45 @@ with tabs[3]:
         st.dataframe(rates, use_container_width=True)
         st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
                            file_name="admin_rates.csv", mime="text/csv")
+
+
+# ----------------------------------
+# Help & Documentation
+# ----------------------------------
+with tabs[4]:  # Help tab
+    st.header("Help & Quick Start")
+
+    st.subheader("🎓 Instructors — 60-second checklist")
+    st.markdown("""
+1. **Open session** → *Instructor Panel* → Select course → **Open new attendance session**  
+2. **Show the QR** or share the URL.  
+3. Watch **Current check-ins**; **Extend 10'** if needed.  
+4. **Close session** when done.  
+5. Export **CSV** from *Past Sessions & Export*.
+""")
+
+    st.subheader("📑 Secretariat — reporting")
+    st.markdown("""
+- Open **Reports** → set **From/To** and **Group by** (Day/Week/Month).  
+- Filter by **Courses**, then **Run admin report**.  
+- Download **Raw**, **Grouped**, **Pivot**, **Rates** as CSV.
+""")
+
+    st.subheader("🛠️ Admin — setup")
+    st.markdown("""
+- **Add users** (admin/instructor).  
+- **Add courses** and **Assign instructors**.  
+- Instructors should then see their courses in *Instructor Panel*.
+""")
+
+    st.subheader("❓ FAQ / Tips")
+    st.markdown("""
+- **Students must use `@hua.gr`**.  
+- If a QR link expires, click **Extend 10'**.  
+- All times are **Europe/Athens**.  
+- If the page keeps “loading”, the proxy needs **WebSocket** headers (contact IT).
+- If you see “Not authenticated” while SSO is optional, ensure `REQUIRE_SSO=false` and use the email field.
+""")
+
+    st.caption("For details, see the full external guide or contact the Secretariat/IT.")
+    
