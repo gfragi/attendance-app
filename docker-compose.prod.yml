@@ -1,8 +1,8 @@
 services:
   app:
     # use image or build locally
-    # build: .
-    image: ghcr.io/gfragi/attendance-app:latest
+    build: .
+    #image: ghcr.io/gfragi/attendance-app:latest
     env_file: [ ./.env.prod ]
     restart: unless-stopped
     volumes: [ ./data:/data ]
