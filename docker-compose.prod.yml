@@ -28,15 +28,17 @@ services:
       - --upstream=http://app:8501
       - --email-domain=hua.gr
       - --redirect-url=https://attendances.ditapps.hua.gr/oauth2/callback
-      - --cookie-secure=true              # HTTPS in prod
+      - --cookie-secure=true
       - --cookie-samesite=lax
+      - --cookie-expire=8h
+      - --cookie-refresh=1h
       - --set-authorization-header=true
       - --pass-authorization-header=true
       - --pass-user-headers=true
-      - --skip-jwt-bearer-tokens=true
-      - --cookie-refresh=1h
-      - --cookie-expire=8h
-    # publish only on loopback; Nginx will proxy to it
+      # optional but can help with some proxies:
+      - --reverse-proxy=true
+      # if issues persist, force cookie domain:
+      # - --cookie-domain=attendances.ditapps.hua.gr
     ports: [ "127.0.0.1:8080:4180" ]
     depends_on:
       app:
