@@ -314,13 +314,18 @@ def is_secretary(email: str) -> bool:
 # -----------------------------
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 st.title(APP_TITLE)
+REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").lower() == "true"
+u = current_user()  # may be empty (Streamlit can't read headers)
 
-u = current_user()
-if not u["email"]:
+if REQUIRE_SSO and not u.get("email"):
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
     st.stop()
 
-st.caption(f"Signed in as **{u.get('name') or u['email']}**")
+if u.get("email"):
+    st.caption(f"Signed in as **{u.get('name') or u['email']}**")
+else:
+    st.caption("Running without SSO headers (proxy enforces @hua.gr).")
+
 
 if not require_domain(u["email"]):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
