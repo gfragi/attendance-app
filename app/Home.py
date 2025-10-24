@@ -260,41 +260,33 @@ def instructor_courses(db, instructor_email):
     return db.query(Course).filter(Course.id.in_(ids)).all()
 
 def current_user():
-    """
-    Read authenticated user from reverse proxy headers (oauth2-proxy/ingress).
-    Falls back to optional env vars for local dev: DEV_FAKE_EMAIL / DEV_FAKE_NAME.
-    Never touches st.secrets unless present, and only inside try/except.
-    """
     email = (
         os.getenv("X_AUTH_REQUEST_EMAIL")
         or os.getenv("X-Auth-Request-Email")
-        or os.getenv("HTTP_X_AUTH_REQUEST_EMAIL")  # some proxies prefix HTTP_
+        or os.getenv("HTTP_X_AUTH_REQUEST_EMAIL")
     )
     name = (
         os.getenv("X_AUTH_REQUEST_USER")
         or os.getenv("X-Auth-Request-User")
         or os.getenv("HTTP_X_AUTH_REQUEST_USER")
     )
-
-    # Dev fallback (optional): allow running the app without the proxy
-    if not email:
-        email = os.getenv("DEV_FAKE_EMAIL")  # e.g., gfragi@hua.gr
-    if not name:
-        name = os.getenv("DEV_FAKE_NAME")    # e.g., George Fragiadakis
-
-    # Optional: only touch st.secrets if it actually exists
-    try:
-        if not email and hasattr(st, "secrets") and "auth_email" in st.secrets:
-            email = st.secrets["auth_email"]
-        if not name and hasattr(st, "secrets") and "auth_name" in st.secrets:
-            name = st.secrets.get("auth_name", None)
-    except Exception:
-        # No secrets file / parse error — ignore
-        pass
-
     if email:
         email = email.strip().lower()
     return {"email": email, "name": name}
+
+# ---- Guard (make SSO optional) ----
+REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").lower() == "true"
+u = current_user()
+
+if REQUIRE_SSO and not u.get("email"):
+    st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
+    st.stop()
+
+if u.get("email"):
+    st.caption(f"Signed in as **{u.get('name') or u['email']}**")
+else:
+    # SSO headers not visible; proxy still protects access. This is expected when REQUIRE_SSO=false.
+    st.caption("Proxy-authenticated mode (headers not visible to app).")
 
 def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
     return bool(email and email.endswith(domain))

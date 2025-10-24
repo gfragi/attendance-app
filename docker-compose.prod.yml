@@ -35,6 +35,7 @@ services:
       - --set-authorization-header=true
       - --pass-authorization-header=true
       - --pass-user-headers=true
+      - --skip-jwt-bearer-tokens=true
       # optional but can help with some proxies:
       # - --reverse-proxy=true
       - --cookie-domain=attendances.ditapps.hua.gr
