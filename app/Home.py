@@ -274,20 +274,6 @@ def current_user():
         email = email.strip().lower()
     return {"email": email, "name": name}
 
-# ---- Guard (make SSO optional) ----
-REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").lower() == "true"
-u = current_user()
-
-if REQUIRE_SSO and not u.get("email"):
-    st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
-    st.stop()
-
-if u.get("email"):
-    st.caption(f"Signed in as **{u.get('name') or u['email']}**")
-else:
-    # SSO headers not visible; proxy still protects access. This is expected when REQUIRE_SSO=false.
-    st.caption("Proxy-authenticated mode (headers not visible to app).")
-
 def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
     return bool(email and email.endswith(domain))
 
@@ -306,8 +292,10 @@ def is_secretary(email: str) -> bool:
 # -----------------------------
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 st.title(APP_TITLE)
+
+# ---- Guard (make SSO optional) ----
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").lower() == "true"
-u = current_user()  # may be empty (Streamlit can't read headers)
+u = current_user()  # may be empty (headers not visible to Streamlit)
 
 if REQUIRE_SSO and not u.get("email"):
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
@@ -316,12 +304,13 @@ if REQUIRE_SSO and not u.get("email"):
 if u.get("email"):
     st.caption(f"Signed in as **{u.get('name') or u['email']}**")
 else:
-    st.caption("Running without SSO headers (proxy enforces @hua.gr).")
+    st.caption("Proxy-authenticated mode (headers not visible to app).")
 
-
-if not require_domain(u["email"]):
+# Domain enforcement: only when we actually have an email header
+if u.get("email") and not u["email"].endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
+
 tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports"])
 
 # ----------------------------------
@@ -329,7 +318,6 @@ tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports"
 # ----------------------------------
 with tabs[0]:
     st.subheader("Student Check-in")
-
     params = st.query_params
     session_token = params.get("session", None)
     if session_token is None:
@@ -348,29 +336,39 @@ with tabs[0]:
             else:
                 st.success(f"Course: {sess.course.title} — open until {fmt_local(sess.expires_at)}")
 
-                # Prefer display name from SSO; allow override if missing
+                # Decide email source: SSO header (if present) OR typed
+                sso_email = u.get("email")
                 default_name = u.get("name") or ""
+
                 with st.form("checkin_form"):
                     student_name = st.text_input("Full name (Ονοματεπώνυμο)", value=default_name)
+                    if sso_email:
+                        st.text_input("Academic email", value=sso_email, disabled=True)
+                        student_email = sso_email
+                    else:
+                        student_email = st.text_input("Academic email", placeholder=f"name.surname{EMAIL_DOMAIN}")
+                        st.caption(f"Only emails under **{EMAIL_DOMAIN}** are accepted.")
+
                     submit = st.form_submit_button("Submit Attendance")
 
-                student_email = u["email"]  # from Google SSO
                 if submit:
                     if not student_name.strip():
                         st.error("Please provide your full name.")
+                    elif not sso_email and not (student_email and student_email.endswith(EMAIL_DOMAIN)):
+                        st.error(f"Email must be a valid **{EMAIL_DOMAIN}** address.")
                     else:
+                        student_email = (student_email or sso_email).strip().lower()
                         exists = db.query(Attendance).filter_by(session_id=sess.id, student_email=student_email).first()
                         if exists:
                             st.info("You are already recorded for this session.")
                         else:
                             rec = Attendance(
                                 session_id=sess.id,
-                                student_name=student_name.strip(),
+                                student_name=" ".join(student_name.split()),
                                 student_email=student_email,
                                 created_at=now_utc(),
                             )
-                            db.add(rec)
-                            db.commit()
+                            db.add(rec); db.commit()
                             st.success("Attendance recorded. Thank you!")
 
 # ----------------------------------
@@ -378,12 +376,11 @@ with tabs[0]:
 # ----------------------------------
 with tabs[1]:
     st.subheader("Instructor Panel")
-
-    if not is_instructor(u["email"]):
+    if not (u.get("email") and is_instructor(u["email"])):
         st.info("Instructor access only.")
         st.stop()
+    instructor_email = u["email"]
 
-    instructor_email = u["email"]  # from SSO
     db = get_db()
 
     my_courses = instructor_courses(db, instructor_email)
@@ -496,7 +493,7 @@ with tabs[1]:
 # Admin Panel
 # ----------------------------------
 with tabs[2]:
-    if not (is_admin(u["email"]) or is_secretary(u["email"])):
+    if not (u.get("email") and (is_admin(u["email"]) or is_secretary(u["email"]))):
         st.subheader("Admin / Secretariat")
         st.info("Access restricted.")
         st.stop()
@@ -557,7 +554,7 @@ with tabs[2]:
 # Reports (quick global view)
 # ----------------------------------
 with tabs[3]:
-    if not (is_admin(u["email"]) or is_secretary(u["email"])):
+    if not (u.get("email") and (is_admin(u["email"]) or is_secretary(u["email"]))):
         st.subheader("Admin Reports")
         st.info("Access restricted.")
         st.stop()
