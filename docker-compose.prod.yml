@@ -36,9 +36,8 @@ services:
       - --pass-authorization-header=true
       - --pass-user-headers=true
       # optional but can help with some proxies:
-      - --reverse-proxy=true
-      # if issues persist, force cookie domain:
-      # - --cookie-domain=attendances.ditapps.hua.gr
+      # - --reverse-proxy=true
+      - --cookie-domain=attendances.ditapps.hua.gr
     ports: [ "10.100.59.105:8080:4180" ]
     depends_on:
       app:
