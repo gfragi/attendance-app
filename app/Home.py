@@ -263,48 +263,50 @@ def instructor_courses(db, instructor_email):
 
 def current_user():
     """
-    Ask oauth2-proxy for the logged-in user (cookie-based) from the browser,
-    then pass the result to Python via Streamlit component channel.
-    Returns {"email": ..., "name": ...} or {"email": None, "name": None}.
+    Get SSO identity from oauth2-proxy via /oauth2/userinfo.
+    Waits exactly once for the browser to respond, then caches in session_state.
+    Returns {"email": ..., "name": ...} with lowercased email.
     """
-    # 1) Try to read from URL first (keeps working if you already add sso_email/sso_name)
-    params = st.query_params
-    url_email = params.get("sso_email")
-    url_name  = params.get("sso_name")
-    if isinstance(url_email, str):
-        return {"email": url_email.strip().lower(), "name": (url_name or "").strip()}
+    # Already resolved this session?
+    if "sso_user" in st.session_state:
+        return st.session_state["sso_user"]
 
-    # 2) Otherwise, ask the browser to fetch /oauth2/userinfo and send it back
-    component = st_html(
+    # Ask the browser (same-origin, cookie-based)
+    result = st_html(
         """
         <script>
         (async () => {
           try {
             const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
+            let value = { email: null, name: null };
             if (res.ok) {
               const data = await res.json();
-              const value = {
-                email: (data && data.email) ? String(data.email).toLowerCase() : null,
-                name:  (data && data.name)  ? String(data.name) : null
-              };
-              Streamlit.setComponentValue(value);
-            } else {
-              // not logged in at proxy
-              Streamlit.setComponentValue({ email: null, name: null });
+              value.email = (data && data.email) ? String(data.email).toLowerCase() : null;
+              value.name  = (data && data.name)  ? String(data.name) : null;
             }
+            // send the value back to Streamlit (Python)
+            Streamlit.setComponentValue(value);
           } catch (e) {
             Streamlit.setComponentValue({ email: null, name: null });
           }
         })();
         </script>
         """,
-        height=0
+        height=0,
+        key="sso-bridge"  # ensures the component re-runs cleanly
     )
 
-    # component is the return value from Streamlit.setComponentValue()
-    if isinstance(component, dict):
-        return {"email": (component.get("email") or None), "name": (component.get("name") or None)}
-    return {"email": None, "name": None}
+    # On the first run, `result` is None → show a short message and stop;
+    # Streamlit will immediately rerun after component sends a value.
+    if not isinstance(result, dict):
+        st.info("Signing you in with university SSO…")
+        st.stop()
+
+    # Cache & return
+    email = (result.get("email") or "").strip().lower() or None
+    name  = (result.get("name")  or "").strip() or None
+    st.session_state["sso_user"] = {"email": email, "name": name}
+    return st.session_state["sso_user"]
 
 def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
     return bool(email and email.endswith(domain))
@@ -328,7 +330,7 @@ st.title(APP_TITLE)
 # ---- Guard (make SSO optional) ----
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 u = current_user()
-u_email = (u.get("email") or "").strip().lower()
+u_email = (u.get("email") or "")
 
 if REQUIRE_SSO and not u_email:
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
