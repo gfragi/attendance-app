@@ -262,51 +262,11 @@ def instructor_courses(db, instructor_email):
 
 
 def current_user():
-    """
-    Get SSO identity from oauth2-proxy via /oauth2/userinfo.
-    Waits exactly once for the browser to respond, then caches in session_state.
-    Returns {"email": ..., "name": ...} with lowercased email.
-    """
-    # Already resolved this session?
-    if "sso_user" in st.session_state:
-        return st.session_state["sso_user"]
-
-    # Ask the browser (same-origin, cookie-based)
-    result = st_html(
-        """
-        <script>
-        (async () => {
-          try {
-            const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
-            let value = { email: null, name: null };
-            if (res.ok) {
-              const data = await res.json();
-              value.email = (data && data.email) ? String(data.email).toLowerCase() : null;
-              value.name  = (data && data.name)  ? String(data.name) : null;
-            }
-            // send the value back to Streamlit (Python)
-            Streamlit.setComponentValue(value);
-          } catch (e) {
-            Streamlit.setComponentValue({ email: null, name: null });
-          }
-        })();
-        </script>
-        """,
-        height=0,
-        key="sso-bridge"  # ensures the component re-runs cleanly
-    )
-
-    # On the first run, `result` is None → show a short message and stop;
-    # Streamlit will immediately rerun after component sends a value.
-    if not isinstance(result, dict):
-        st.info("Signing you in with university SSO…")
-        st.stop()
-
-    # Cache & return
-    email = (result.get("email") or "").strip().lower() or None
-    name  = (result.get("name")  or "").strip() or None
-    st.session_state["sso_user"] = {"email": email, "name": name}
-    return st.session_state["sso_user"]
+    email = st.query_params.get("sso_email")
+    name  = st.query_params.get("sso_name")
+    email = email.strip().lower() if isinstance(email, str) else None
+    name  = name.strip() if isinstance(name, str) else None
+    return {"email": email, "name": name}
 
 def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
     return bool(email and email.endswith(domain))
@@ -329,9 +289,40 @@ st.title(APP_TITLE)
 
 # ---- Guard (make SSO optional) ----
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
-u = current_user()
-u_email = (u.get("email") or "")
 
+# If SSO is required and we don't have claims in the URL, fetch them
+if REQUIRE_SSO and not st.query_params.get("sso_email"):
+    st.markdown(
+        """
+        <script>
+        (async () => {
+          try {
+            // Ask oauth2-proxy who we are; cookie is sent automatically (same origin)
+            const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
+            if (res.status === 401 || res.status === 403) {
+              // Not logged in at the proxy yet → start login, then return to this page
+              window.location = '/oauth2/start?rd=' + encodeURIComponent(window.location);
+              return;
+            }
+            const data = await res.json();
+            const url  = new URL(window.location);
+            if (data && data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
+            if (data && data.name)  url.searchParams.set('sso_name',  String(data.name));
+            // Reload with the SSO params applied
+            window.location.replace(url.toString());
+          } catch (e) {
+            document.body.innerText = 'SSO bootstrap failed. Please refresh.';
+          }
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+
+u = current_user()
+u_email = u.get("email") or ""
 if REQUIRE_SSO and not u_email:
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
     st.stop()
@@ -339,6 +330,7 @@ if REQUIRE_SSO and not u_email:
 if u_email and not u_email.endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
+
 
 tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports", "Help"])
 
