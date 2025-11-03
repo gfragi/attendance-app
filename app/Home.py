@@ -367,7 +367,7 @@ u = current_user()
 # ---- Header bar ----
 # Path to your logo
 
-logo_path = os.path.join(os.path.dirname(__file__), "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
+logo_path = os.path.join(os.path.dirname(__file__), "assets/dit_hua_logo.png")
 
 def load_logo_base64(path):
     with open(path, "rb") as f:
