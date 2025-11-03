@@ -367,20 +367,22 @@ u = current_user()
 # ---- Header bar ----
 # Path to your logo
 
-logo_path = os.path.join(os.path.dirname(__file__), "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
+logo_path = os.path.join(os.path.dirname(__file__), "assets/dit_hua_logo.png")
 
 def load_logo_base64(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
+# Convert to base64 and embed
 logo_b64 = load_logo_base64(logo_path)
 logo_data_url = f"data:image/png;base64,{logo_b64}"
 
-department_home_url = "https://dit.hua.gr/"
+# Configuration
+department_home_url = "https://dit.hua.gr/"   # <-- Change this to your department or faculty homepage
 logout_url = "/oauth2/sign_out"
 user_display = u.get("email") or "Guest"
 
-# Style + layout
+# Styling
 st.markdown(
     """
     <style>
@@ -388,28 +390,22 @@ st.markdown(
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 0.4rem 1.2rem;
+        padding: 0.6rem 1.2rem;
         background-color: #0e1117;
         border-bottom: 1px solid #333;
         position: sticky;
         top: 0;
         z-index: 999;
     }
-    .top-bar-left {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-    }
     .top-bar img {
-        height: 80px; /* Increased size */
-        margin-top: 5px;
+        height: 80px;
         transition: transform 0.2s ease-in-out;
     }
     .top-bar img:hover {
         transform: scale(1.05);
     }
     .top-bar .user-info {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         color: #ccc;
     }
     .top-bar a {
@@ -425,16 +421,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Render header
 st.markdown(
     f"""
     <div class="top-bar">
-        <div class="top-bar-left">
+        <div>
             <a href="{department_home_url}" target="_blank">
                 <img src="{logo_data_url}" alt="Department Logo">
             </a>
-            <span style="font-size:1.4rem; font-weight:600; color:white;">
-                Centralized Attendance for University Courses
-            </span>
         </div>
         <div class="user-info">
             Signed in as <strong>{user_display}</strong>
