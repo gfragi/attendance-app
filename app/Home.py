@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
 from streamlit.components.v1 import html as st_html
-
+import json
 # -----------------------------
 # Config (prod-ish)
 # -----------------------------
@@ -260,51 +260,51 @@ def instructor_courses(db, instructor_email):
     ids = [l.course_id for l in links]
     return db.query(Course).filter(Course.id.in_(ids)).all()
 
+
 def current_user():
     """
-    SSO-first: read email/name from query params injected by a small JS bridge
-    that fetches /oauth2/userinfo from oauth2-proxy (same-origin, cookie-based).
-    If params are missing and REQUIRE_SSO is true, we trigger the bridge.
+    Ask oauth2-proxy for the logged-in user (cookie-based) from the browser,
+    then pass the result to Python via Streamlit component channel.
+    Returns {"email": ..., "name": ...} or {"email": None, "name": None}.
     """
+    # 1) Try to read from URL first (keeps working if you already add sso_email/sso_name)
     params = st.query_params
-    email = params.get("sso_email")
-    name  = params.get("sso_name")
+    url_email = params.get("sso_email")
+    url_name  = params.get("sso_name")
+    if isinstance(url_email, str):
+        return {"email": url_email.strip().lower(), "name": (url_name or "").strip()}
 
-    # Normalize
-    email = email.strip().lower() if isinstance(email, str) else email
-    name  = name.strip() if isinstance(name, str) else name
+    # 2) Otherwise, ask the browser to fetch /oauth2/userinfo and send it back
+    component = st_html(
+        """
+        <script>
+        (async () => {
+          try {
+            const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
+            if (res.ok) {
+              const data = await res.json();
+              const value = {
+                email: (data && data.email) ? String(data.email).toLowerCase() : null,
+                name:  (data && data.name)  ? String(data.name) : null
+              };
+              Streamlit.setComponentValue(value);
+            } else {
+              // not logged in at proxy
+              Streamlit.setComponentValue({ email: null, name: null });
+            }
+          } catch (e) {
+            Streamlit.setComponentValue({ email: null, name: null });
+          }
+        })();
+        </script>
+        """,
+        height=0
+    )
 
-    # If SSO is required and we don't yet have claims, run the bridge once.
-    REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
-    if REQUIRE_SSO and not email:
-        with st.spinner("Signing you in with university SSO…"):
-            st_html(
-                """
-                <script>
-                (async () => {
-                  try {
-                    const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
-                    if (!res.ok) {
-                      // Not logged in at proxy => bounce to /oauth2/start
-                      window.location = '/oauth2/start?rd=' + encodeURIComponent(window.location);
-                      return;
-                    }
-                    const data = await res.json();
-                    const url  = new URL(window.location);
-                    if (data && data.email)  url.searchParams.set('sso_email', data.email);
-                    if (data && data.name)   url.searchParams.set('sso_name',  data.name);
-                    // Reload the top page with the SSO params applied
-                    window.location.replace(url.toString());
-                  } catch (e) {
-                    document.body.innerText = 'SSO bridge error. Please retry.';
-                  }
-                })();
-                </script>
-                """,
-                height=0
-            )
-            st.stop()  # wait for reload
-    return {"email": email, "name": name}
+    # component is the return value from Streamlit.setComponentValue()
+    if isinstance(component, dict):
+        return {"email": (component.get("email") or None), "name": (component.get("name") or None)}
+    return {"email": None, "name": None}
 
 def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
     return bool(email and email.endswith(domain))
@@ -329,14 +329,11 @@ st.title(APP_TITLE)
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 u = current_user()
 u_email = (u.get("email") or "").strip().lower()
-u_name = (u.get("name") or "").strip()
 
 if REQUIRE_SSO and not u_email:
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
     st.stop()
 
-
-# Domain enforcement: only when we actually have an email header
 if u_email and not u_email.endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
