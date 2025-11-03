@@ -367,19 +367,22 @@ u = current_user()
 # ---- Header bar ----
 # Path to your logo
 
-logo_path = os.path.join(os.path.dirname(__file__), "../assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
+logo_path = os.path.join(os.path.dirname(__file__), "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
 
-# Convert to base64 for inline display
 def load_logo_base64(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
+# Convert to base64 and embed
 logo_b64 = load_logo_base64(logo_path)
 logo_data_url = f"data:image/png;base64,{logo_b64}"
 
+# Configuration
+department_home_url = "https://dit.hua.gr/"   # <-- Change this to your department or faculty homepage
 logout_url = "/oauth2/sign_out"
 user_display = u.get("email") or "Guest"
 
+# Styling
 st.markdown(
     """
     <style>
@@ -396,6 +399,10 @@ st.markdown(
     }
     .top-bar img {
         height: 50px;
+        transition: transform 0.2s ease-in-out;
+    }
+    .top-bar img:hover {
+        transform: scale(1.05);
     }
     .top-bar .user-info {
         font-size: 0.9rem;
@@ -414,11 +421,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Render header
 st.markdown(
     f"""
     <div class="top-bar">
         <div>
-            <img src="{logo_data_url}" alt="Department Logo">
+            <a href="{department_home_url}" target="_blank">
+                <img src="{logo_data_url}" alt="Department Logo">
+            </a>
         </div>
         <div class="user-info">
             Signed in as <strong>{user_display}</strong>
