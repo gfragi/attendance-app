@@ -10,7 +10,10 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
 from streamlit.components.v1 import html as st_html
-import json
+import base64
+import os
+
+
 # -----------------------------
 # Config (prod-ish)
 # -----------------------------
@@ -362,16 +365,60 @@ if REQUIRE_SSO and not st.query_params.get("sso_email"):
 u = current_user()
 
 # ---- Header bar ----
-department_logo_url = "../assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"  # <-- replace with your department logo
+# Path to your logo
+
+logo_path = os.path.join(os.path.dirname(__file__), "../assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
+
+# Convert to base64 for inline display
+def load_logo_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+logo_b64 = load_logo_base64(logo_path)
+logo_data_url = f"data:image/png;base64,{logo_b64}"
 
 logout_url = "/oauth2/sign_out"
 user_display = u.get("email") or "Guest"
 
 st.markdown(
+    """
+    <style>
+    .top-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 1.2rem;
+        background-color: #0e1117;
+        border-bottom: 1px solid #333;
+        position: sticky;
+        top: 0;
+        z-index: 999;
+    }
+    .top-bar img {
+        height: 50px;
+    }
+    .top-bar .user-info {
+        font-size: 0.9rem;
+        color: #ccc;
+    }
+    .top-bar a {
+        color: #f66;
+        text-decoration: none;
+        margin-left: 0.6rem;
+    }
+    .top-bar a:hover {
+        text-decoration: underline;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
     f"""
     <div class="top-bar">
         <div>
-            <img src="{department_logo_url}" alt="Department Logo">
+            <img src="{logo_data_url}" alt="Department Logo">
         </div>
         <div class="user-info">
             Signed in as <strong>{user_display}</strong>
@@ -381,7 +428,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 
 u_email = u.get("email") or ""
 if REQUIRE_SSO and not u_email:
