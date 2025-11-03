@@ -268,6 +268,7 @@ def current_user():
     name  = name.strip() if isinstance(name, str) else None
     return {"email": email, "name": name}
 
+
 def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
     return bool(email and email.endswith(domain))
 
@@ -292,31 +293,30 @@ REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
 # If SSO is required and we don't have claims in the URL, fetch them
 if REQUIRE_SSO and not st.query_params.get("sso_email"):
-    st.markdown(
+    st_html(
         """
         <script>
         (async () => {
           try {
-            // Ask oauth2-proxy who we are; cookie is sent automatically (same origin)
+            // Ask oauth2-proxy who we are (cookie-based, same-origin)
             const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
-            if (res.status === 401 || res.status === 403) {
-              // Not logged in at the proxy yet → start login, then return to this page
+            if (!res.ok) {
+              // Not logged in at proxy yet -> start login and return here
               window.location = '/oauth2/start?rd=' + encodeURIComponent(window.location);
               return;
             }
             const data = await res.json();
             const url  = new URL(window.location);
-            if (data && data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data && data.name)  url.searchParams.set('sso_name',  String(data.name));
-            // Reload with the SSO params applied
-            window.location.replace(url.toString());
+            if (data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
+            if (data.name)  url.searchParams.set('sso_name',  String(data.name));
+            window.location.replace(url.toString());  // reload with params
           } catch (e) {
             document.body.innerText = 'SSO bootstrap failed. Please refresh.';
           }
         })();
         </script>
         """,
-        unsafe_allow_html=True,
+        height=0,
     )
     st.stop()
 
@@ -327,6 +327,7 @@ if REQUIRE_SSO and not u_email:
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
     st.stop()
 
+EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "@hua.gr")
 if u_email and not u_email.endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
