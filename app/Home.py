@@ -292,33 +292,41 @@ st.title(APP_TITLE)
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
 # If SSO is required and we don't have claims in the URL, fetch them
+# If SSO is required and we don't have claims in the URL, fetch them
 if REQUIRE_SSO and not st.query_params.get("sso_email"):
     st_html(
         """
         <script>
         (async () => {
           try {
+            const topWin = window.top || window;              // <-- use the top frame
+            const curUrl = new URL(topWin.location.href);
+
             // Ask oauth2-proxy who we are (cookie-based, same-origin)
             const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
+
             if (!res.ok) {
               // Not logged in at proxy yet -> start login and return here
-              window.location = '/oauth2/start?rd=' + encodeURIComponent(window.location);
+              topWin.location.href = '/oauth2/start?rd=' + encodeURIComponent(curUrl.toString());
               return;
             }
+
             const data = await res.json();
-            const url  = new URL(window.location);
-            if (data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data.name)  url.searchParams.set('sso_name',  String(data.name));
-            window.location.replace(url.toString());  // reload with params
+            if (data && data.email) curUrl.searchParams.set('sso_email', String(data.email).toLowerCase());
+            if (data && data.name)  curUrl.searchParams.set('sso_name',  String(data.name));
+
+            // Reload the **top** page with the params applied
+            topWin.location.replace(curUrl.toString());
           } catch (e) {
             document.body.innerText = 'SSO bootstrap failed. Please refresh.';
           }
         })();
         </script>
         """,
-        height=0,
+        height=1,   # any non-zero height
     )
     st.stop()
+
 
 
 u = current_user()
