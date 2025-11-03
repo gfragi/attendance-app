@@ -286,6 +286,36 @@ def is_secretary(email: str) -> bool:
 # UI
 # -----------------------------
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
+st.markdown(
+    """
+    <style>
+    .top-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 1.2rem;
+        background-color: #0e1117;
+        border-bottom: 1px solid #333;
+    }
+    .top-bar img {
+        height: 50px;
+    }
+    .top-bar .user-info {
+        font-size: 0.9rem;
+        color: #ccc;
+    }
+    .top-bar a {
+        color: #f66;
+        text-decoration: none;
+        margin-left: 0.6rem;
+    }
+    .top-bar a:hover {
+        text-decoration: underline;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title(APP_TITLE)
 
 # ---- Guard (make SSO optional) ----
@@ -330,6 +360,29 @@ if REQUIRE_SSO and not st.query_params.get("sso_email"):
 
 
 u = current_user()
+
+# ---- Header bar ----
+department_logo_url = "https://www.hua.gr/wp-content/uploads/2021/04/hua-logo.png"  # <-- replace with your department logo
+
+logout_url = "/oauth2/sign_out"
+user_display = u.get("email") or "Guest"
+
+st.markdown(
+    f"""
+    <div class="top-bar">
+        <div>
+            <img src="{department_logo_url}" alt="Department Logo">
+        </div>
+        <div class="user-info">
+            Signed in as <strong>{user_display}</strong>
+            {"| <a href='" + logout_url + "' target='_top'>Logout</a>" if user_display != "Guest" else ""}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 u_email = u.get("email") or ""
 if REQUIRE_SSO and not u_email:
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
