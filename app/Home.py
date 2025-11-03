@@ -362,7 +362,7 @@ if REQUIRE_SSO and not st.query_params.get("sso_email"):
 u = current_user()
 
 # ---- Header bar ----
-department_logo_url = "https://www.hua.gr/wp-content/uploads/2021/04/hua-logo.png"  # <-- replace with your department logo
+department_logo_url = "../assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"  # <-- replace with your department logo
 
 logout_url = "/oauth2/sign_out"
 user_display = u.get("email") or "Guest"
