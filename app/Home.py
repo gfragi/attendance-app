@@ -14,6 +14,7 @@ import base64
 import os
 
 
+
 # -----------------------------
 # Config (prod-ish)
 # -----------------------------
@@ -591,8 +592,13 @@ with tabs[1]:
             st.success("Session opened.")
 
         st.markdown("### Active Sessions")
+
         active = db.query(Session).filter_by(course_id=course.id, is_open=True)\
                  .order_by(Session.start_time.desc()).all()
+
+        now = now_utc()
+        active = [s for s in active if s.is_open and to_aware_utc(s.expires_at) > now]
+
         if not active:
             st.info("No active sessions.")
         else:
@@ -732,7 +738,7 @@ with tabs[2]:
 # Reports (quick global view)
 # ----------------------------------
 with tabs[3]:
-    if not (u.get("email") and (is_admin(u["email"]) or is_secretary(u["email"]))):
+    if not (u.get("email") and (is_admin(u["email"]))):
         st.subheader("Admin Reports")
         st.info("Access restricted.")
         st.stop()

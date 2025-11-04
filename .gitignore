@@ -1,5 +1,5 @@
 attend_venv/
-# attendance.db
+attendance.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
