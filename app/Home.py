@@ -34,9 +34,19 @@ SessionLocal = sessionmaker(bind=engine, future=True)
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 
 # Role allowlists (comma-separated emails)
-ADMIN_EMAILS       = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
-INSTRUCTOR_EMAILS  = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",") if e.strip()}
-SECRETARY_EMAILS   = {e.strip().lower() for e in os.getenv("SECRETARY_EMAILS", "").split(",") if e.strip()}
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in (
+        os.getenv("ADMIN_EMAILS", "") + "," + os.getenv("SECRETARY_EMAILS", "")
+    ).split(",")
+    if e.strip()
+}
+
+INSTRUCTOR_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",")
+    if e.strip()
+}
 
 # ---- Models ----
 class User(Base):
@@ -281,9 +291,12 @@ def is_admin(email: str) -> bool:
 def is_instructor(email: str) -> bool:
     return email in INSTRUCTOR_EMAILS or is_admin(email)
 
-def is_secretary(email: str) -> bool:
-    # Secretaires have report access but not user/course management (adjust as you like)
-    return email in SECRETARY_EMAILS or is_admin(email)
+
+def role_labels(email: str):
+    roles = []
+    if email in ADMIN_EMAILS: roles.append("Admin")
+    if email in INSTRUCTOR_EMAILS: roles.append("Instructor")
+    return roles or ["Authenticated"]
 
 # -----------------------------
 # UI
@@ -324,7 +337,6 @@ st.title(APP_TITLE)
 # ---- Guard (make SSO optional) ----
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
-# If SSO is required and we don't have claims in the URL, fetch them
 # If SSO is required and we don't have claims in the URL, fetch them
 if REQUIRE_SSO and not st.query_params.get("sso_email"):
     st_html(
@@ -398,7 +410,7 @@ st.markdown(
         z-index: 999;
     }
     .top-bar img {
-        height: 80px;
+        height: 40px;
         transition: transform 0.2s ease-in-out;
     }
     .top-bar img:hover {
@@ -424,15 +436,44 @@ st.markdown(
 # Render header
 st.markdown(
     f"""
+    <style>
+    .top-bar {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 1.2rem;
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #e0e0e0;
+    }}
+    .top-bar img {{
+        height: 60px;
+        width: auto;
+        vertical-align: middle;
+    }}
+    .user-info {{
+        font-size: 0.95rem;
+        color: #333;
+        font-family: 'Inter', sans-serif;
+    }}
+    .user-info a {{
+        color: #007BFF;
+        text-decoration: none;
+        font-weight: 500;
+    }}
+    .user-info a:hover {{
+        text-decoration: underline;
+    }}
+    </style>
+
     <div class="top-bar">
-        <div>
+        <div class="logo">
             <a href="{department_home_url}" target="_blank">
                 <img src="{logo_data_url}" alt="Department Logo">
             </a>
         </div>
         <div class="user-info">
             Signed in as <strong>{user_display}</strong>
-            {"| <a href='" + logout_url + "' target='_top'>Logout</a>" if user_display != "Guest" else ""}
+            {" | <a href='" + logout_url + "' target='_top'>Logout</a>" if user_display != "Guest" else ""}
         </div>
     </div>
     """,
@@ -630,7 +671,7 @@ with tabs[1]:
 # Admin Panel
 # ----------------------------------
 with tabs[2]:
-    if not (u.get("email") and (is_admin(u["email"]) or is_secretary(u["email"]))):
+    if not (u.get("email") and (is_admin(u["email"]))):
         st.subheader("Admin / Secretariat")
         st.info("Access restricted.")
         st.stop()
@@ -645,7 +686,7 @@ with tabs[2]:
         with st.form("add_user_form"):
             name = st.text_input("Name")
             email = st.text_input("Email")
-            role = st.selectbox("Role", ["admin", "instructor"])
+            role = st.selectbox("Role", ["admin/secretary", "instructor"])
             add_u = st.form_submit_button("Add user")
         if add_u:
             if not name or not email:
