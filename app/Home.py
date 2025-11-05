@@ -334,20 +334,55 @@ st.markdown(
 # =============================
 tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports", "Help"])
 
-# --- Student Check-in ---
+# ----------------------------------
+# Student public check-in (with token + optional auto-check)
+# ----------------------------------
 with tabs[0]:
     st.subheader("Student Check-in")
+
     params = st.query_params
-    session_token = params.get("session")
-    if session_token is None:
+    session_token = params.get("session", None)
+    autocheck = str(params.get("autocheckin", "")).lower() in {"1", "true", "yes"}
+
+    # Helper: do a server-side auto check-in (no form)
+    def do_autocheckin(db, sess, email_from_sso: str, name_from_sso: str | None):
+        # derive a display name if SSO didn't provide one
+        def _derive_name(email_: str) -> str:
+            local = email_.split("@", 1)[0]
+            local = local.replace(".", " ").replace("_", " ").strip()
+            return " ".join(w.capitalize() for w in local.split())
+
+        student_email = email_from_sso.strip().lower()
+        student_name  = (name_from_sso or _derive_name(student_email)).strip()
+
+        exists = db.query(Attendance).filter_by(
+            session_id=sess.id, student_email=student_email
+        ).first()
+        if exists:
+            st.info("You are already recorded for this session.")
+            return
+
+        rec = Attendance(
+            session_id=sess.id,
+            student_name=student_name,
+            student_email=student_email,
+            created_at=now_utc(),
+        )
+        db.add(rec); db.commit()
+        st.success("✅ Attendance recorded. Thank you!")
+
+    if not session_token:
+        # Manual entry path (kept for desktop or when someone types the URL)
         session_token = st.text_input("Session token (from QR link):", value=session_token or "")
 
+    # When either user pressed "Load Session" or we already have a token from URL
     if st.button("Load Session") or session_token:
         db = get_db()
         sess = db.query(Session).filter_by(token=session_token).first()
         if not sess:
             st.error("Invalid session token.")
         else:
+            # Basic session checks
             if not sess.is_open:
                 st.warning("This session is closed.")
             elif now_utc() > to_aware_utc(sess.expires_at):
@@ -355,8 +390,20 @@ with tabs[0]:
             else:
                 st.success(f"Course: {sess.course.title} — open until {fmt_local(sess.expires_at)}")
 
-                default_name = u_name
-                sso_email = u_email
+                sso_email = (u.get("email") or "").strip().lower()
+                sso_name  = (u.get("name") or "").strip() or None
+
+                if autocheck:
+                    # Auto mode: require SSO email; if missing, SSO bootstrap earlier will handle it
+                    if not sso_email:
+                        st.error("Authentication is required to auto check-in. Please sign in and retry.")
+                    else:
+                        do_autocheckin(db, sess, sso_email, sso_name)
+                        # In auto mode we stop after recording to avoid re-submission on reruns
+                        st.stop()
+
+                # Fallback to form (desktop/manual)
+                default_name = sso_name or ""
                 with st.form("checkin_form"):
                     student_name = st.text_input("Full name (Ονοματεπώνυμο)", value=default_name)
                     if sso_email:
@@ -373,15 +420,15 @@ with tabs[0]:
                     elif not sso_email and not (student_email and student_email.endswith(EMAIL_DOMAIN)):
                         st.error(f"Email must be a valid **{EMAIL_DOMAIN}** address.")
                     else:
-                        student_email = (student_email or sso_email).strip().lower()
-                        exists = db.query(Attendance).filter_by(session_id=sess.id, student_email=student_email).first()
+                        final_email = (student_email or sso_email).strip().lower()
+                        exists = db.query(Attendance).filter_by(session_id=sess.id, student_email=final_email).first()
                         if exists:
                             st.info("You are already recorded for this session.")
                         else:
                             rec = Attendance(
                                 session_id=sess.id,
                                 student_name=" ".join(student_name.split()),
-                                student_email=student_email,
+                                student_email=final_email,
                                 created_at=now_utc(),
                             )
                             db.add(rec); db.commit()
@@ -437,7 +484,7 @@ with tabs[1]:
         else:
             for sess in active:
                 st.write(f"**Started:** {fmt_local(sess.start_time)} | **Expires:** {fmt_local(sess.expires_at)}")
-                public_url = f"{PUBLIC_BASE_URL}/?session={sess.token}"
+                public_url = f"{PUBLIC_BASE_URL}/?session={sess.token}&autocheckin=1"
                 st.image(qr_bytes(public_url), caption="Scan to check-in")
                 st.code(public_url, language="text")
 
