@@ -10,46 +10,30 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
 from streamlit.components.v1 import html as st_html
-import base64
-import os
 
-
-
-# -----------------------------
-# Config (prod-ish)
-# -----------------------------
+# =============================
+# Config
+# =============================
 APP_TITLE = "Centralized Attendance for University Courses"
 
-# Domain & durations
 EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "@hua.gr")
 SESSION_DEFAULT_MINUTES = int(os.getenv("SESSION_DEFAULT_MINUTES", "15"))
 
-# DB (SQLite by default; in containers use /data)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/attendance.db")
 engine = create_engine(DATABASE_URL, echo=False, future=True)
-
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine, future=True)
 
-# Public base URL (used for QR links)
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 
 # Role allowlists (comma-separated emails)
-ADMIN_EMAILS = {
-    e.strip().lower()
-    for e in (
-        os.getenv("ADMIN_EMAILS", "") + "," + os.getenv("SECRETARY_EMAILS", "")
-    ).split(",")
-    if e.strip()
-}
+ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+SECRETARY_EMAILS = {e.strip().lower() for e in os.getenv("SECRETARY_EMAILS", "").split(",") if e.strip()}
+INSTRUCTOR_EMAILS = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",") if e.strip()}
 
-INSTRUCTOR_EMAILS = {
-    e.strip().lower()
-    for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",")
-    if e.strip()
-}
-
-# ---- Models ----
+# =============================
+# Models
+# =============================
 class User(Base):
     __tablename__ = "users"
     id          = Column(Integer, primary_key=True)
@@ -74,7 +58,6 @@ class CourseInstructor(Base):
     course    = relationship("Course", back_populates="instructors")
     user      = relationship("User", back_populates="teaches")
     __table_args__ = (UniqueConstraint('course_id', 'user_id', name='_course_inst_uc'),)
-    
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -98,12 +81,47 @@ class Attendance(Base):
     session       = relationship("Session", back_populates="attendance")
     __table_args__ = (UniqueConstraint('session_id', 'student_email', name='_unique_sess_email'),)
 
-# Create tables (ok for dev; for prod use migrations)
 Base.metadata.create_all(engine)
 
-# -----------------------------
+# =============================
 # Helpers
-# -----------------------------
+# =============================
+def get_db():
+    return SessionLocal()
+
+def now_utc():
+    return datetime.now(timezone.utc)
+
+def to_aware_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+def fmt_local(dt):
+    if dt is None:
+        return "-"
+    return to_aware_utc(dt).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
+
+def gen_token():
+    return uuid.uuid4().hex
+
+def qr_bytes(url: str) -> bytes:
+    img = qrcode.make(url)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+def instructor_courses(db, instructor_email):
+    u = db.query(User).filter_by(email=instructor_email, role="instructor").first()
+    if not u:
+        return []
+    links = db.query(CourseInstructor).filter_by(user_id=u.id).all()
+    ids = [l.course_id for l in links]
+    if not ids:
+        return []
+    return db.query(Course).filter(Course.id.in_(ids)).all()
 
 def get_report_base_query(db, instructor_email=None, course_ids=None, date_from=None, date_to=None):
     q = (
@@ -119,19 +137,16 @@ def get_report_base_query(db, instructor_email=None, course_ids=None, date_from=
         .join(Session, Session.course_id == Course.id)
         .join(Attendance, Attendance.session_id == Session.id)
     )
-    # Instructor scoping
     if instructor_email:
         q = q.join(CourseInstructor, CourseInstructor.course_id == Course.id)\
              .join(User, User.id == CourseInstructor.user_id)\
              .filter(User.email == instructor_email)
-    # Filters
     if course_ids:
         q = q.filter(Course.id.in_(course_ids))
     if date_from:
         q = q.filter(Attendance.created_at >= date_from)
     if date_to:
         q = q.filter(Attendance.created_at < date_to)
-
     return q
 
 def df_from_query(q):
@@ -151,34 +166,22 @@ def df_from_query(q):
     return df
 
 def group_df(df: pd.DataFrame, freq: str = "D"):
-    """
-    freq: "D" | "W-MON" | "MS"
-    Returns (grouped, pivot)
-    """
     if df.empty:
         return df, df
-
-    # Ensure datetime
     ts = pd.to_datetime(df["check_in_at"], utc=False, errors="coerce")
-
-    # Compute bucket start time safely for non-fixed freqs
     if freq == "D":
         bucket = ts.dt.floor("D")
-    elif freq.startswith("W"):  # e.g., "W-MON"
+    elif freq.startswith("W"):
         bucket = ts.dt.to_period(freq).dt.start_time
-    elif freq in ("MS", "M"):
-        # "MS" = month start; "M" = month end -> normalize to month start for consistency
+    elif freq in ("MS","M"):
         bucket = ts.dt.to_period("M").dt.start_time
     else:
-        # Fallback: try floor; if it fails, default to day
         try:
             bucket = ts.dt.floor(freq)
         except Exception:
             bucket = ts.dt.floor("D")
-
     df = df.copy()
     df["bucket"] = bucket
-
     grouped = (
         df.groupby(["course_code", "course_title", "bucket"])
           .agg(
@@ -189,7 +192,6 @@ def group_df(df: pd.DataFrame, freq: str = "D"):
           .reset_index()
           .sort_values(["bucket", "course_code"])
     )
-
     pivot = (
         grouped.pivot_table(
             index="bucket",
@@ -200,20 +202,13 @@ def group_df(df: pd.DataFrame, freq: str = "D"):
         )
         .sort_index()
     )
-
     return grouped, pivot
 
-
 def course_attendance_rates(df: pd.DataFrame):
-    """
-    Per course, per student: how many sessions attended vs total sessions of that course.
-    """
     if df.empty:
         return pd.DataFrame()
-    # total sessions per course
     total_sessions = df.drop_duplicates(["course_code","session_id"])\
                        .groupby("course_code")["session_id"].nunique().rename("total_sessions")
-    # sessions attended per student per course
     attended = df.drop_duplicates(["course_code","session_id","student_email"])\
                  .groupby(["course_code","student_email"])["session_id"].nunique().rename("attended_sessions")\
                  .reset_index()
@@ -221,147 +216,52 @@ def course_attendance_rates(df: pd.DataFrame):
     out["attendance_rate_%"] = (out["attended_sessions"] / out["total_sessions"] * 100).round(1)
     return out.sort_values(["course_code","attendance_rate_%"], ascending=[True, False])
 
-
-def to_aware_utc(dt):
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-def fmt_local(dt):
-    if dt is None:
-        return "-"
-    return to_aware_utc(dt).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
-
-def get_db():
-    return SessionLocal()
-
-def gen_token():
-    return uuid.uuid4().hex
-
-def now_utc():
-    return datetime.now(timezone.utc)
-
-def qr_bytes(url: str) -> bytes:
-    img = qrcode.make(url)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-def b64img(b: bytes) -> str:
-    return "data:image/png;base64," + base64.b64encode(b).decode()
-
-def ensure_demo_data(db):
-    # Create a demo admin and instructor if not present
-    if db.query(User).count() == 0:
-        admin = User(name="Admin User", email="admin@example.com", role="admin")
-        inst  = User(name="Instructor One", email="instructor@example.com", role="instructor")
-        db.add_all([admin, inst])
-        db.commit()
-    if db.query(Course).count() == 0:
-        c1 = Course(code="PTIA-101", title="Προηγμένες Τεχνολογίες Πληροφορικής")
-        db.add(c1); db.commit()
-        inst = db.query(User).filter_by(role="instructor").first()
-        db.add(CourseInstructor(course_id=c1.id, user_id=inst.id))
-        db.commit()
-
-def instructor_courses(db, instructor_email):
-    u = db.query(User).filter_by(email=instructor_email, role="instructor").first()
-    if not u:
-        return []
-    links = db.query(CourseInstructor).filter_by(user_id=u.id).all()
-    ids = [l.course_id for l in links]
-    return db.query(Course).filter(Course.id.in_(ids)).all()
-
-
+# =============================
+# Auth / Roles
+# =============================
 def current_user():
-    email = st.query_params.get("sso_email")
-    name  = st.query_params.get("sso_name")
+    # SSO bridge writes sso_email/sso_name to URL query
+    params = st.query_params
+    email = params.get("sso_email")
+    name  = params.get("sso_name")
     email = email.strip().lower() if isinstance(email, str) else None
     name  = name.strip() if isinstance(name, str) else None
     return {"email": email, "name": name}
 
-
-def require_domain(email: str, domain: str = EMAIL_DOMAIN) -> bool:
-    return bool(email and email.endswith(domain))
-
 def is_admin(email: str) -> bool:
-    return email in ADMIN_EMAILS
+    return bool(email) and email in ADMIN_EMAILS
+
+def is_secretary(email: str) -> bool:
+    return bool(email) and email in SECRETARY_EMAILS
 
 def is_instructor(email: str) -> bool:
-    return email in INSTRUCTOR_EMAILS or is_admin(email)
+    return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
 
-
-def role_labels(email: str):
-    roles = []
-    if email in ADMIN_EMAILS: roles.append("Admin")
-    if email in INSTRUCTOR_EMAILS: roles.append("Instructor")
-    return roles or ["Authenticated"]
-
-# -----------------------------
-# UI
-# -----------------------------
+# =============================
+# Page chrome (logo + logout) and SSO bootstrap
+# =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
-st.markdown(
-    """
-    <style>
-    .top-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.6rem 1.2rem;
-        background-color: #0e1117;
-        border-bottom: 1px solid #333;
-    }
-    .top-bar img {
-        height: 50px;
-    }
-    .top-bar .user-info {
-        font-size: 0.9rem;
-        color: #ccc;
-    }
-    .top-bar a {
-        color: #f66;
-        text-decoration: none;
-        margin-left: 0.6rem;
-    }
-    .top-bar a:hover {
-        text-decoration: underline;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-st.title(APP_TITLE)
 
-# ---- Guard (make SSO optional) ----
+# Require SSO?
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
-# If SSO is required and we don't have claims in the URL, fetch them
+# If SSO is required and we don't have claims in the URL yet, bootstrap from oauth2-proxy
 if REQUIRE_SSO and not st.query_params.get("sso_email"):
     st_html(
         """
         <script>
         (async () => {
           try {
-            const topWin = window.top || window;              // <-- use the top frame
+            const topWin = window.top || window;
             const curUrl = new URL(topWin.location.href);
-
-            // Ask oauth2-proxy who we are (cookie-based, same-origin)
             const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
-
             if (!res.ok) {
-              // Not logged in at proxy yet -> start login and return here
               topWin.location.href = '/oauth2/start?rd=' + encodeURIComponent(curUrl.toString());
               return;
             }
-
             const data = await res.json();
             if (data && data.email) curUrl.searchParams.set('sso_email', String(data.email).toLowerCase());
             if (data && data.name)  curUrl.searchParams.set('sso_name',  String(data.name));
-
-            // Reload the **top** page with the params applied
             topWin.location.replace(curUrl.toString());
           } catch (e) {
             document.body.innerText = 'SSO bootstrap failed. Please refresh.';
@@ -369,138 +269,76 @@ if REQUIRE_SSO and not st.query_params.get("sso_email"):
         })();
         </script>
         """,
-        height=1,   # any non-zero height
+        height=1,
     )
     st.stop()
 
-
-
 u = current_user()
+u_email = u.get("email") or ""
+u_name = u.get("name") or ""
 
-# ---- Header bar ----
-# Path to your logo
+if REQUIRE_SSO and not u_email:
+    st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
+    st.stop()
 
-logo_path = os.path.join(os.path.dirname(__file__), "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
+if u_email and not u_email.endswith(EMAIL_DOMAIN):
+    st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
+    st.stop()
 
-def load_logo_base64(path):
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+# Top bar with logo (left) and logout (right)
+def _embed_logo():
+    logo_path = os.path.join(os.path.dirname(__file__), "assets", "HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
+    if not os.path.exists(logo_path):
+        return ""
+    with open(logo_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    return f"data:image/png;base64,{b64}"
 
-# Convert to base64 and embed
-logo_b64 = load_logo_base64(logo_path)
-logo_data_url = f"data:image/png;base64,{logo_b64}"
-
-# Configuration
-department_home_url = "https://dit.hua.gr/"   # <-- Change this to your department or faculty homepage
+logo_data_url = _embed_logo()
 logout_url = "/oauth2/sign_out"
-user_display = u.get("email") or "Guest"
+department_home_url = "https://dit.hua.gr/"
 
-# Styling
-st.markdown(
-    """
-    <style>
-    .top-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.6rem 1.2rem;
-        background-color: #0e1117;
-        border-bottom: 1px solid #333;
-        position: sticky;
-        top: 0;
-        z-index: 999;
-    }
-    .top-bar img {
-        height: 40px;
-        transition: transform 0.2s ease-in-out;
-    }
-    .top-bar img:hover {
-        transform: scale(1.05);
-    }
-    .top-bar .user-info {
-        font-size: 0.9rem;
-        color: #ccc;
-    }
-    .top-bar a {
-        color: #f66;
-        text-decoration: none;
-        margin-left: 0.6rem;
-    }
-    .top-bar a:hover {
-        text-decoration: underline;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Render header
 st.markdown(
     f"""
     <style>
-    .top-bar {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.6rem 1.2rem;
-        background-color: #f8f9fa;
-        border-bottom: 1px solid #e0e0e0;
-    }}
-    .top-bar img {{
-        height: 60px;
-        width: auto;
-        vertical-align: middle;
-    }}
-    .user-info {{
-        font-size: 0.95rem;
-        color: #333;
-        font-family: 'Inter', sans-serif;
-    }}
-    .user-info a {{
-        color: #007BFF;
-        text-decoration: none;
-        font-weight: 500;
-    }}
-    .user-info a:hover {{
-        text-decoration: underline;
-    }}
+      .top-bar {{
+        display:flex;align-items:center;justify-content:space-between;
+        padding:0.6rem 1.2rem;background:#f8f9fa;border-bottom:1px solid #e0e0e0;
+        position:sticky;top:0;z-index:999;
+      }}
+      .top-left {{ display:flex;align-items:center;gap:1rem; }}
+      .top-left img {{ height:80px; width:auto; }}
+      .top-title {{ font-size:1.25rem;font-weight:700;color:#222; }}
+      .top-right {{ color:#333;font-size:0.95rem; }}
+      .top-right a {{ color:#007BFF;text-decoration:none;font-weight:500; }}
+      .top-right a:hover {{ text-decoration:underline; }}
     </style>
-
     <div class="top-bar">
-        <div class="logo">
-            <a href="{department_home_url}" target="_blank">
-                <img src="{logo_data_url}" alt="Department Logo">
-            </a>
-        </div>
-        <div class="user-info">
-            Signed in as <strong>{user_display}</strong>
-            {" | <a href='" + logout_url + "' target='_top'>Logout</a>" if user_display != "Guest" else ""}
-        </div>
+      <div class="top-left">
+        <a href="{department_home_url}" target="_blank">
+          {'<img src="'+logo_data_url+'" alt="Department Logo">' if logo_data_url else ''}
+        </a>
+        <div class="top-title">{APP_TITLE}</div>
+      </div>
+      <div class="top-right">
+        Signed in as <strong>{u_email or 'Guest'}</strong>
+        {(" | <a href='"+logout_url+"' target='_top'>Logout</a>") if u_email else ""}
+      </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-u_email = u.get("email") or ""
-if REQUIRE_SSO and not u_email:
-    st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
-    st.stop()
-
-EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "@hua.gr")
-if u_email and not u_email.endswith(EMAIL_DOMAIN):
-    st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
-    st.stop()
-
-
+# =============================
+# Tabs
+# =============================
 tabs = st.tabs(["Student Check-in", "Instructor Panel", "Admin Panel", "Reports", "Help"])
 
-# ----------------------------------
-# Student public check-in (with token)
-# ----------------------------------
+# --- Student Check-in ---
 with tabs[0]:
     st.subheader("Student Check-in")
     params = st.query_params
-    session_token = params.get("session", None)
+    session_token = params.get("session")
     if session_token is None:
         session_token = st.text_input("Session token (from QR link):", value=session_token or "")
 
@@ -517,10 +355,8 @@ with tabs[0]:
             else:
                 st.success(f"Course: {sess.course.title} — open until {fmt_local(sess.expires_at)}")
 
-                # Decide email source: SSO header (if present) OR typed
-                sso_email = u.get("email")
-                default_name = u.get("name") or ""
-
+                default_name = u_name
+                sso_email = u_email
                 with st.form("checkin_form"):
                     student_name = st.text_input("Full name (Ονοματεπώνυμο)", value=default_name)
                     if sso_email:
@@ -529,7 +365,6 @@ with tabs[0]:
                     else:
                         student_email = st.text_input("Academic email", placeholder=f"name.surname{EMAIL_DOMAIN}")
                         st.caption(f"Only emails under **{EMAIL_DOMAIN}** are accepted.")
-
                     submit = st.form_submit_button("Submit Attendance")
 
                 if submit:
@@ -552,19 +387,15 @@ with tabs[0]:
                             db.add(rec); db.commit()
                             st.success("Attendance recorded. Thank you!")
 
-# ----------------------------------
-# Instructor Panel
-# ----------------------------------
+# --- Instructor Panel ---
 with tabs[1]:
     st.subheader("Instructor Panel")
-    if not (u.get("email") and is_instructor(u["email"])):
+    if not is_instructor(u_email):
         st.info("Instructor access only.")
         st.stop()
-    instructor_email = u["email"]
 
     db = get_db()
-
-    my_courses = instructor_courses(db, instructor_email)
+    my_courses = instructor_courses(db, u_email)
     if not my_courses:
         st.warning("No courses assigned to your account. Contact the secretary.")
     else:
@@ -576,8 +407,11 @@ with tabs[1]:
                 format_func=lambda c: f"{c.code} — {c.title}"
             )
         with colB:
-            duration = st.number_input("Session duration (minutes)", min_value=5, max_value=240, value=SESSION_DEFAULT_MINUTES,
-                help="How long the QR/link accepts check-ins.")
+            duration = st.number_input(
+                "Session duration (minutes)",
+                min_value=5, max_value=240, value=SESSION_DEFAULT_MINUTES,
+                help="How long the QR/link accepts check-ins."
+            )
 
         if st.button("Open new attendance session", help="Creates a timed session and QR/URL for students to scan."):
             token = gen_token()
@@ -592,10 +426,9 @@ with tabs[1]:
             st.success("Session opened.")
 
         st.markdown("### Active Sessions")
-
         active = db.query(Session).filter_by(course_id=course.id, is_open=True)\
                  .order_by(Session.start_time.desc()).all()
-
+        # Hide already-expired sessions
         now = now_utc()
         active = [s for s in active if s.is_open and to_aware_utc(s.expires_at) > now]
 
@@ -605,8 +438,7 @@ with tabs[1]:
             for sess in active:
                 st.write(f"**Started:** {fmt_local(sess.start_time)} | **Expires:** {fmt_local(sess.expires_at)}")
                 public_url = f"{PUBLIC_BASE_URL}/?session={sess.token}"
-                png = qr_bytes(public_url)
-                st.image(png, caption="Scan to check-in")
+                st.image(qr_bytes(public_url), caption="Scan to check-in")
                 st.code(public_url, language="text")
 
                 c1, c2, c3 = st.columns(3)
@@ -625,7 +457,7 @@ with tabs[1]:
                     count = db.query(Attendance).filter_by(session_id=sess.id).count()
                     st.metric("Current check-ins", count)
 
-        # Reports (same as you added), just reuse instructor_email
+        # Reports
         st.markdown("### 📊 Instructor Reports")
         date_col1, date_col2, grp_col = st.columns([1,1,1])
         with date_col1:
@@ -650,7 +482,7 @@ with tabs[1]:
         if st.button("Run report", key="instructor_run_report"):
             q = get_report_base_query(
                 db,
-                instructor_email=instructor_email,
+                instructor_email=u_email,
                 course_ids=course_ids_sel,
                 date_from=pd.Timestamp(date_from).tz_localize("UTC"),
                 date_to=pd.Timestamp(date_to).tz_localize("UTC"),
@@ -673,26 +505,22 @@ with tabs[1]:
             rates = course_attendance_rates(df)
             st.dataframe(rates, use_container_width=True)
             st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(), file_name="instructor_rates.csv", mime="text/csv")
-# ----------------------------------
-# Admin Panel
-# ----------------------------------
+
+# --- Admin Panel ---
 with tabs[2]:
-    if not (u.get("email") and (is_admin(u["email"]))):
-        st.subheader("Admin / Secretariat")
+    st.subheader("Admin / Secretariat")
+    if not (is_admin(u_email) or is_secretary(u_email)):
         st.info("Access restricted.")
         st.stop()
 
-    st.subheader("Admin / Secretariat Panel")
-
     db = get_db()
 
-    if is_admin(u["email"]):
-        # Full management
+    if is_admin(u_email):
         st.markdown("#### Users")
         with st.form("add_user_form"):
             name = st.text_input("Name")
             email = st.text_input("Email")
-            role = st.selectbox("Role", ["admin/secretary", "instructor"])
+            role = st.selectbox("Role", ["admin", "instructor"])
             add_u = st.form_submit_button("Add user")
         if add_u:
             if not name or not email:
@@ -733,41 +561,25 @@ with tabs[2]:
         else:
             st.info("Add at least one instructor and one course.")
     else:
-        st.info("Secretary mode: reports only (no user/course management).")
-# ----------------------------------
-# Reports (quick global view)
-# ----------------------------------
+        st.info("Secretary mode: reporting access only (no user/course management).")
+
+# --- Admin Reports (Admin or Secretary) ---
 with tabs[3]:
-    if not (u.get("email") and (is_admin(u["email"]))):
-        st.subheader("Admin Reports")
+    st.subheader("Admin Reports")
+    if not (is_admin(u_email) or is_secretary(u_email)):
         st.info("Access restricted.")
         st.stop()
-
-    st.subheader("Admin Reports")
 
     db = get_db()
     all_courses = db.query(Course).order_by(Course.code.asc()).all()
 
     c1, c2, c3 = st.columns([1,1,1])
     with c1:
-        date_from = st.date_input(
-    "From date",
-    value=pd.Timestamp.today().normalize() - pd.Timedelta(days=30),
-    key="admin_from"
-)
+        date_from = st.date_input("From date", value=pd.Timestamp.today().normalize() - pd.Timedelta(days=30), key="admin_from")
     with c2:
-        date_to = st.date_input(
-    "To date",
-    value=pd.Timestamp.today().normalize() + pd.Timedelta(days=1),
-    key="admin_to"
-)
+        date_to = st.date_input("To date", value=pd.Timestamp.today().normalize() + pd.Timedelta(days=1), key="admin_to")
     with c3:
-        bucket = st.selectbox(
-    "Group by",
-    ["Day (D)", "Week (W-MON)", "Month (MS)"],
-    index=0,
-    key="admin_groupby"
-)
+        bucket = st.selectbox("Group by", ["Day (D)", "Week (W-MON)", "Month (MS)"], index=0, key="admin_groupby")
 
     freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
     freq = freq_map[bucket]
@@ -784,7 +596,7 @@ with tabs[3]:
     if st.button("Run admin report"):
         q = get_report_base_query(
             db,
-            instructor_email=None,  # admin sees all
+            instructor_email=None,
             course_ids=course_ids_sel,
             date_from=pd.Timestamp(date_from).tz_localize("UTC"),
             date_to=pd.Timestamp(date_to).tz_localize("UTC"),
@@ -813,11 +625,8 @@ with tabs[3]:
         st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
                            file_name="admin_rates.csv", mime="text/csv")
 
-
-# ----------------------------------
-# Help & Documentation
-# ----------------------------------
-with tabs[4]:  # Help tab
+# --- Help ---
+with tabs[4]:
     st.header("Help & Quick Start")
 
     st.subheader("🎓 Instructors — 60-second checklist")
@@ -826,7 +635,7 @@ with tabs[4]:  # Help tab
 2. **Show the QR** or share the URL.  
 3. Watch **Current check-ins**; **Extend 10'** if needed.  
 4. **Close session** when done.  
-5. Export **CSV** from *Past Sessions & Export*.
+5. Export **CSV** from reports.
 """)
 
     st.subheader("📑 Secretariat — reporting")
@@ -840,17 +649,14 @@ with tabs[4]:  # Help tab
     st.markdown("""
 - **Add users** (admin/instructor).  
 - **Add courses** and **Assign instructors**.  
-- Instructors should then see their courses in *Instructor Panel*.
+- Instructors then see their courses in *Instructor Panel*.
 """)
 
     st.subheader("❓ FAQ / Tips")
-    st.markdown("""
-- **Students must use `@hua.gr`**.  
+    st.markdown(f"""
+- **Students must use `{EMAIL_DOMAIN}`**.  
 - If a QR link expires, click **Extend 10'**.  
 - All times are **Europe/Athens**.  
-- If the page keeps “loading”, the proxy needs **WebSocket** headers (contact IT).
-- If you see “Not authenticated” while SSO is optional, ensure `REQUIRE_SSO=false` and use the email field.
+- If the page keeps “loading”, the proxy must allow **WebSocket** upgrade headers.  
+- If you see “Not authenticated”, confirm `REQUIRE_SSO=true` and OAuth2 Proxy is in front.
 """)
-
-    st.caption("For details, see the full external guide or contact the Secretariat/IT.")
-    
