@@ -10,7 +10,6 @@ import streamlit as st
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
-from streamlit.components.v1 import html as st_html
 
 # =============================
 # Config
@@ -294,56 +293,19 @@ st.markdown(
 # Require SSO?
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
-if REQUIRE_SSO and not st.query_params.get("sso_email"):
-    st_html(
-        """
-        <div style="padding:0.75rem 0;">
-          <span style="margin-right:0.5rem;">You are not signed in.</span>
-          <a id="sso-link" target="_top"
-             style="padding:0.4rem 0.75rem; background:#0b6efd; color:#fff; border-radius:6px; text-decoration:none;">
-            Sign in with Google
-          </a>
-        </div>
-        <script>
-        (function() {{
-          // Always prepare a user-activated fallback link (works in sandbox via target=_top).
-          var rd = encodeURIComponent((window.top || window).location.href);
-          var a  = document.getElementById('sso-link');
-          a.href = '/oauth2/start?rd=' + rd;
-
-          // Try silent login: if already authenticated at oauth2-proxy, inject claims into URL.
-          (async () => {{
-            try {{
-              const res = await fetch('/oauth2/userinfo', {{ credentials: 'include' }});
-              if (!res.ok) return; // not signed in yet -> user clicks the button
-              const data = await res.json();
-              const topWin = window.top || window;
-              const url = new URL(topWin.location.href);
-              if (data && data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
-              if (data && data.name)  url.searchParams.set('sso_name',  String(data.name));
-              // This may be blocked in Chrome if not user-initiated in a sandbox; that's fine,
-              // the visible button still works.
-              try {{ topWin.location.replace(url.toString()); }} catch (e) {{}}
-            }} catch (e) {{}}
-          }})();
-        }})();
-        </script>
-        """,
-        height=80,
-    )
-    st.stop()
+REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
 u = current_user()
 u_email = u.get("email") or ""
 u_name = u.get("name") or ""
 
 if REQUIRE_SSO and not u_email:
-    st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
-    st.stop()
+    st.info("You are not signed in. Please use the university login. (If this persists, the proxy needs to append SSO params.)")
 
 if u_email and not u_email.endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
+
 
 
 # =============================
