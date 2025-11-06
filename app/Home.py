@@ -253,7 +253,7 @@ LOGO_DATA = f"data:image/png;base64,{_b64(str(LOGO_PATH))}"
 u = current_user()
 DEPT_URL   = "https://dit.hua.gr/"
 LOGOUT_URL = "/oauth2/sign_out"
-user_email = u.get("email") or "Guest"
+user_email = u.get("email")
 
 # compact, aligned header
 st.markdown(
