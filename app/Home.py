@@ -249,53 +249,35 @@ LOGO_DATA = f"data:image/png;base64,{_b64(str(LOGO_PATH))}"
 u = current_user()
 DEPT_URL   = "https://dit.hua.gr/"
 LOGOUT_URL = "/oauth2/sign_out"
-user_email = u.get("email")
+user_email = u.get("email") or ""
 
-# compact, aligned header
+right_block = (
+    f"""<div class="hua-right">
+          Signed in as <strong>{user_email}</strong>
+          &nbsp; | &nbsp; <a href="/oauth2/sign_out" target="_top">Logout</a>
+        </div>"""
+    if user_email else ""
+)
+
 st.markdown(
     f"""
     <style>
-      .hua-header {{
-        display:flex; align-items:center; gap:18px;
-        border-bottom:1px solid var(--secondary-background-color);
-        padding:10px 8px 12px 8px; margin-bottom:6px;
-      }}
-      .hua-left {{
-        display:flex; align-items:center; gap:16px; min-width:0;
-      }}
-      .hua-logo img {{
-        height:52px; width:auto; display:block;
-      }}
-      .hua-title {{
-        line-height:1.15;
-      }}
-      .hua-title .line1 {{
-        font-size:22px; font-weight:700; margin:0; white-space:nowrap;
-      }}
-      .hua-title .line2 {{
-        font-size:22px; font-weight:700; margin:0; white-space:nowrap;
-      }}
-      .hua-right {{
-        margin-left:auto; text-align:right; font-size:15px;
-      }}
-      .hua-right a {{
-        color:#0b6efd; text-decoration:none;
-      }}
+      .hua-header {{ display:flex; align-items:center; gap:18px;
+                     border-bottom:1px solid var(--secondary-background-color);
+                     padding:10px 8px 12px 8px; margin-bottom:6px; }}
+      .hua-left {{ display:flex; align-items:center; gap:16px; min-width:0; }}
+      .hua-logo img {{ height:52px; width:auto; display:block; }}
+      .hua-title {{ line-height:1.15; }}
+      .hua-title .line1, .hua-title .line2 {{ font-size:22px; font-weight:700; margin:0; white-space:nowrap; }}
+      .hua-right {{ margin-left:auto; text-align:right; font-size:15px; }}
+      .hua-right a {{ color:#0b6efd; text-decoration:none; }}
       .hua-right a:hover {{ text-decoration:underline; }}
-      /* Responsive: tighten on small screens */
-      @media (max-width: 680px) {{
-        .hua-title .line1, .hua-title .line2 {{ font-size:18px; }}
-        .hua-logo img {{ height:44px; }}
-      }}
-      @media (max-width: 520px) {{
-        .hua-header {{ flex-wrap:wrap; gap:10px; }}
-        .hua-right {{ width:100%; text-align:left; }}
-      }}
+      @media (max-width:680px) {{ .hua-title .line1, .hua-title .line2 {{ font-size:18px; }} .hua-logo img {{ height:44px; }} }}
+      @media (max-width:520px) {{ .hua-header {{ flex-wrap:wrap; gap:10px; }} .hua-right {{ width:100%; text-align:left; }} }}
     </style>
-
     <div class="hua-header">
       <div class="hua-left">
-        <a class="hua-logo" href="{DEPT_URL}" target="_blank" rel="noopener">
+        <a class="hua-logo" href="https://dit.hua.gr/" target="_blank" rel="noopener">
           <img src="{LOGO_DATA}" alt="Harokopio University - Dept. of Informatics & Telematics"/>
         </a>
         <div class="hua-title">
@@ -303,10 +285,7 @@ st.markdown(
           <p class="line2">University Courses</p>
         </div>
       </div>
-      <div class="hua-right">
-        Signed in as <strong>{user_email}</strong>
-        {" &nbsp; | &nbsp; <a href='" + LOGOUT_URL + "' target='_top'>Logout</a>" if user_email else ""}
-      </div>
+      {right_block}
     </div>
     """,
     unsafe_allow_html=True,
@@ -315,31 +294,42 @@ st.markdown(
 # Require SSO?
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
-# If SSO is required and we don't have claims in the URL yet, bootstrap from oauth2-proxy
 if REQUIRE_SSO and not st.query_params.get("sso_email"):
     st_html(
         """
+        <div style="padding:0.75rem 0;">
+          <span style="margin-right:0.5rem;">You are not signed in.</span>
+          <a id="sso-link" target="_top"
+             style="padding:0.4rem 0.75rem; background:#0b6efd; color:#fff; border-radius:6px; text-decoration:none;">
+            Sign in with Google
+          </a>
+        </div>
         <script>
-        (async () => {
-          try {
-            const topWin = window.top || window;
-            const curUrl = new URL(topWin.location.href);
-            const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
-            if (!res.ok) {
-              topWin.location.href = '/oauth2/start?rd=' + encodeURIComponent(curUrl.toString());
-              return;
-            }
-            const data = await res.json();
-            if (data && data.email) curUrl.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data && data.name)  curUrl.searchParams.set('sso_name',  String(data.name));
-            topWin.location.replace(curUrl.toString());
-          } catch (e) {
-            document.body.innerText = 'SSO bootstrap failed. Please refresh.';
-          }
-        })();
+        (function() {{
+          // Always prepare a user-activated fallback link (works in sandbox via target=_top).
+          var rd = encodeURIComponent((window.top || window).location.href);
+          var a  = document.getElementById('sso-link');
+          a.href = '/oauth2/start?rd=' + rd;
+
+          // Try silent login: if already authenticated at oauth2-proxy, inject claims into URL.
+          (async () => {{
+            try {{
+              const res = await fetch('/oauth2/userinfo', {{ credentials: 'include' }});
+              if (!res.ok) return; // not signed in yet -> user clicks the button
+              const data = await res.json();
+              const topWin = window.top || window;
+              const url = new URL(topWin.location.href);
+              if (data && data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
+              if (data && data.name)  url.searchParams.set('sso_name',  String(data.name));
+              // This may be blocked in Chrome if not user-initiated in a sandbox; that's fine,
+              // the visible button still works.
+              try {{ topWin.location.replace(url.toString()); }} catch (e) {{}}
+            }} catch (e) {{}}
+          }})();
+        }})();
         </script>
         """,
-        height=1,
+        height=80,
     )
     st.stop()
 
