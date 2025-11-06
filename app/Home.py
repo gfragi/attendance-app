@@ -238,23 +238,15 @@ def is_admin(email: str) -> bool:
 def is_instructor(email: str) -> bool:
     return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
 
+
 # =============================
 # Page chrome (logo + logout) and SSO bootstrap
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-if "sso_boot_tries" not in st.session_state:
-    st.session_state["sso_boot_tries"] = 0
+# retry guard
+st.session_state.setdefault("sso_boot_tries", 0)
 
-@st.cache_data
-def _b64(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
-LOGO_PATH = Path(__file__).parent / "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
-LOGO_DATA = f"data:image/png;base64,{_b64(str(LOGO_PATH))}"
-
-# ---- SSO bootstrap (run before reading claims) ----
 REQUIRE_SSO   = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
 LOGOUT_URL    = f"{OAUTH2_PREFIX}/sign_out"
@@ -263,80 +255,55 @@ def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-tries = st.session_state.get("sso_boot_tries", 0)
-if REQUIRE_SSO and need_sso_claims() and tries < 2:
-    st.session_state["sso_boot_tries"] = tries + 1
-
-    # Visible fallback so users can click if JS fails
-    st.markdown(
-        f"""
-        <div style="margin:10px 0;padding:12px 14px;border:1px solid var(--secondary-background-color);border-radius:8px;">
-          <b>Signing you in…</b>
-          If nothing happens, <a id="hua-login-link" href="#" target="_top" rel="noopener">click here</a>.
-        </div>
-        <script>
-          // Build an absolute RD URL (safer than ".")
-          const hereAbs = (window.top||window).location.href.split('#')[0];
-          const loginUrl = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(hereAbs);
-          const a = document.getElementById('hua-login-link');
-          if (a) a.href = loginUrl;
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # JS bootstrap with: cache-bust, timeout, and loop guard via localStorage
+# ---- SSO bootstrap: only if we need claims and haven't tried too many times
+if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
+    st.session_state["sso_boot_tries"] += 1
     st_html(
         f"""
+        <div style="padding:12px">Signing you in… If nothing happens,
+          <a id="sso_go" href="{OAUTH2_PREFIX}/start">click here</a>.
+        </div>
         <script>
         (async () => {{
           const topWin = window.top || window;
-          const hereAbs = topWin.location.href.split('#')[0];
-          const keyTried = 'hua_sso_tried';
+          const cur    = new URL(topWin.location.href);
+          const hash   = cur.hash;    // preserve hash fragment
+          cur.hash = "";              // we add it back later
+
+          function goLogin() {{
+            const rd = encodeURIComponent(cur.toString() + hash);
+            const url = '{OAUTH2_PREFIX}/start?rd=' + rd;
+            document.getElementById('sso_go').href = url;
+            topWin.location.href = url;
+          }}
+
           try {{
-            // If we've already tried in this browser tab, don't loop forever
-            if (!localStorage.getItem(keyTried)) {{
-              localStorage.setItem(keyTried, '1');
-            }}
-
-            // 2500ms timeout so we don't hang
-            const ctl = new AbortController();
-            const timer = setTimeout(() => ctl.abort(), 2500);
-
             const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
               credentials: 'include',
-              cache: 'no-store',
-              signal: ctl.signal
+              cache: 'no-store'
             }});
-            clearTimeout(timer);
-
-            if (!res.ok) {{
-              // Kick to login once; if that fails the visible link remains
-              topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(hereAbs);
-              return;
-            }}
+            if (!res.ok) return goLogin();
 
             const data = await res.json();
-            const url = new URL(hereAbs);
-            if (data && data.email) url.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data && (data.name || data.user)) url.searchParams.set('sso_name', String(data.name || data.user));
-            localStorage.setItem(keyTried, 'done');
-            topWin.location.replace(url.toString());  // replace, not push
+            if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
+            if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
+
+            // replace (no history spam) and restore hash
+            topWin.location.replace(cur.toString() + hash);
           }} catch (e) {{
-            // As last resort, drive user to login (visible link is also on page)
-            topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(hereAbs);
+            goLogin();
           }}
         }})();
         </script>
         """,
-        height=2,
+        height=40,
     )
     st.stop()
 
-# ---- Read claims ONCE and render header AFTER we know them ----
-
-u_email = (st.query_params.get("sso_email") or "").strip().lower()
-u_name  = (st.query_params.get("sso_name")  or "").strip()
+# after bootstrap, read the claims once
+u = {"email": (st.query_params.get("sso_email") or "").strip().lower(),
+     "name":  (st.query_params.get("sso_name")  or "").strip()}
+u_email, u_name = u["email"], u["name"]
 
 right_block = (
     f"""<div class="hua-right">
@@ -378,13 +345,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Optional: if still not signed-in, keep a visible link (no JS)
 if REQUIRE_SSO and not u_email:
-    here_abs = st.query_params.get("rd") or ""  # not strictly needed
     st.info("You are not signed in. Use the university login.")
-    st.markdown(f"[Sign in now]({OAUTH2_PREFIX}/start?rd=.)")
+    st.markdown(f'<a href="{OAUTH2_PREFIX}/start?rd=" id="fallback_sso">Sign in now</a>', unsafe_allow_html=True)
+    st_html("""
+      <script>
+        const link = document.getElementById('fallback_sso');
+        const cur  = new URL((window.top||window).location.href);
+        link.href  = '/oauth2/start?rd=' + encodeURIComponent(cur.toString());
+      </script>
+    """, height=1)
+    st.stop()
 
-# =============================
+
 # Tabs
 # =============================
 
