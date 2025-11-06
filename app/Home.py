@@ -262,6 +262,22 @@ def need_sso_claims() -> bool:
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
 if REQUIRE_SSO and need_sso_claims():
+    # Visible fallback so Chrome users don't see a blank page
+    st.markdown(
+        f"""
+        <div style="
+             margin: 10px 0;
+             padding: 12px 14px;
+             border: 1px solid var(--secondary-background-color);
+             border-radius: 8px;">
+          <b>Signing you in…</b> If nothing happens in a couple of seconds,
+          <a href="{OAUTH2_PREFIX}/start?rd=." target="_top" rel="noopener">click here to sign in</a>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # JS bootstrap with cache-bust + short timeout fallback
     st_html(
         f"""
         <script>
@@ -270,11 +286,17 @@ if REQUIRE_SSO and need_sso_claims():
             const topWin = window.top || window;
             const here   = new URL(topWin.location.href);
 
-            // Cache-bust to avoid stale /userinfo results (esp. Chrome)
+            // 2.5s timeout so we don't hang forever
+            const ctl = new AbortController();
+            const t = setTimeout(() => ctl.abort(), 2500);
+
             const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
               credentials: 'include',
-              cache: 'no-store'
+              cache: 'no-store',
+              signal: ctl.signal
             }});
+
+            clearTimeout(t);
 
             if (!res.ok) {{
               topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(here.toString());
@@ -285,18 +307,20 @@ if REQUIRE_SSO and need_sso_claims():
             if (data && data.email) here.searchParams.set('sso_email', String(data.email).toLowerCase());
             if (data && (data.name || data.user)) here.searchParams.set('sso_name', String(data.name || data.user));
 
-            // Replace (not push) so back button is clean
+            // Replace (no history pollution)
             topWin.location.replace(here.toString());
           }} catch (err) {{
-            const u = new URL((window.top || window).location.href);
-            (window.top || window).location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(u.toString());
+            const topWin = window.top || window;
+            const here   = new URL(topWin.location.href);
+            topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(here.toString());
           }}
         }})();
         </script>
         """,
-        height=1,
+        height=2,  # small but non-zero so Streamlit mounts it
     )
     st.stop()
+
 
 # ---- Read claims ONCE and render header AFTER we know them ----
 u = current_user()
