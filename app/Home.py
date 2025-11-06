@@ -29,7 +29,6 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 
 # Role allowlists (comma-separated emails)
 ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
-SECRETARY_EMAILS = {e.strip().lower() for e in os.getenv("SECRETARY_EMAILS", "").split(",") if e.strip()}
 INSTRUCTOR_EMAILS = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",") if e.strip()}
 
 # =============================
@@ -232,11 +231,9 @@ def current_user():
 def is_admin(email: str) -> bool:
     return bool(email) and email in ADMIN_EMAILS
 
-def is_secretary(email: str) -> bool:
-    return bool(email) and email in SECRETARY_EMAILS
-
 def is_instructor(email: str) -> bool:
     return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
+
 
 # =============================
 # Page chrome (logo + logout) and SSO bootstrap
@@ -250,71 +247,8 @@ def _b64(path: str) -> str:
 LOGO_PATH = Path(__file__).parent / "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
 LOGO_DATA = f"data:image/png;base64,{_b64(str(LOGO_PATH))}"
 
-u = current_user()
 DEPT_URL   = "https://dit.hua.gr/"
 LOGOUT_URL = "/oauth2/sign_out"
-user_email = u.get("email")
-
-# compact, aligned header
-st.markdown(
-    f"""
-    <style>
-      .hua-header {{
-        display:flex; align-items:center; gap:18px;
-        border-bottom:1px solid var(--secondary-background-color);
-        padding:10px 8px 12px 8px; margin-bottom:6px;
-      }}
-      .hua-left {{
-        display:flex; align-items:center; gap:16px; min-width:0;
-      }}
-      .hua-logo img {{
-        height:52px; width:auto; display:block;
-      }}
-      .hua-title {{
-        line-height:1.15;
-      }}
-      .hua-title .line1 {{
-        font-size:22px; font-weight:700; margin:0; white-space:nowrap;
-      }}
-      .hua-title .line2 {{
-        font-size:22px; font-weight:700; margin:0; white-space:nowrap;
-      }}
-      .hua-right {{
-        margin-left:auto; text-align:right; font-size:15px;
-      }}
-      .hua-right a {{
-        color:#0b6efd; text-decoration:none;
-      }}
-      .hua-right a:hover {{ text-decoration:underline; }}
-      /* Responsive: tighten on small screens */
-      @media (max-width: 680px) {{
-        .hua-title .line1, .hua-title .line2 {{ font-size:18px; }}
-        .hua-logo img {{ height:44px; }}
-      }}
-      @media (max-width: 520px) {{
-        .hua-header {{ flex-wrap:wrap; gap:10px; }}
-        .hua-right {{ width:100%; text-align:left; }}
-      }}
-    </style>
-
-    <div class="hua-header">
-      <div class="hua-left">
-        <a class="hua-logo" href="{DEPT_URL}" target="_blank" rel="noopener">
-          <img src="{LOGO_DATA}" alt="Harokopio University - Dept. of Informatics & Telematics"/>
-        </a>
-        <div class="hua-title">
-          <p class="line1">Centralized Attendance for</p>
-          <p class="line2">University Courses</p>
-        </div>
-      </div>
-      <div class="hua-right">
-        Signed in as <strong>{user_email}</strong>
-        {" &nbsp; | &nbsp; <a href='" + LOGOUT_URL + "' target='_top'>Logout</a>" if user_email != "Guest" else ""}
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
 
 # Require SSO?
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
@@ -347,18 +281,74 @@ if REQUIRE_SSO and not st.query_params.get("sso_email"):
     )
     st.stop()
 
+# Read user AFTER the bootstrap (so we don't render "guest" states)
 u = current_user()
-u_email = u.get("email") or ""
-u_name = u.get("name") or ""
+u_email = (u.get("email") or "").strip().lower()
+u_name  = (u.get("name") or "").strip()
 
+# Hard stop if SSO is required and still no email
 if REQUIRE_SSO and not u_email:
     st.error("You are not authenticated. Please access the app through the university login (Google SSO).")
     st.stop()
 
+# Enforce domain when we actually have an email
 if u_email and not u_email.endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
 
+# Compact, aligned header (no 'Guest' ever shown)
+st.markdown(
+    f"""
+    <style>
+      .hua-header {{
+        display:flex; align-items:center; gap:18px;
+        border-bottom:1px solid var(--secondary-background-color);
+        padding:10px 8px 12px 8px; margin-bottom:6px;
+      }}
+      .hua-left {{
+        display:flex; align-items:center; gap:16px; min-width:0;
+      }}
+      .hua-logo img {{
+        height:52px; width:auto; display:block;
+      }}
+      .hua-title {{ line-height:1.15; }}
+      .hua-title .line1,
+      .hua-title .line2 {{
+        font-size:22px; font-weight:700; margin:0; white-space:nowrap;
+      }}
+      .hua-right {{
+        margin-left:auto; text-align:right; font-size:15px;
+      }}
+      .hua-right a {{ color:#0b6efd; text-decoration:none; }}
+      .hua-right a:hover {{ text-decoration:underline; }}
+      @media (max-width: 680px) {{
+        .hua-title .line1, .hua-title .line2 {{ font-size:18px; }}
+        .hua-logo img {{ height:44px; }}
+      }}
+      @media (max-width: 520px) {{
+        .hua-header {{ flex-wrap:wrap; gap:10px; }}
+        .hua-right {{ width:100%; text-align:left; }}
+      }}
+    </style>
+
+    <div class="hua-header">
+      <div class="hua-left">
+        <a class="hua-logo" href="{DEPT_URL}" target="_blank" rel="noopener">
+          <img src="{LOGO_DATA}" alt="Harokopio University - Dept. of Informatics & Telematics"/>
+        </a>
+        <div class="hua-title">
+          <p class="line1">Centralized Attendance for</p>
+          <p class="line2">University Courses</p>
+        </div>
+      </div>
+      <div class="hua-right">
+        {("Signed in as <strong>" + u_email + "</strong> &nbsp; | &nbsp; "
+          "<a href='" + LOGOUT_URL + "' target='_top'>Logout</a>") if u_email else ""}
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # =============================
 # Tabs
@@ -601,7 +591,7 @@ if "Instructor Panel" in tab_index:
 if "Admin Panel" in tab_index:
     with tabs[tab_index["Admin Panel"]]:
         st.subheader("Admin / Secretariat")
-        if not (is_admin(u_email) or is_secretary(u_email)):
+        if not (is_admin(u_email)):
             st.info("Access restricted.")
             st.stop()
 
@@ -655,11 +645,11 @@ if "Admin Panel" in tab_index:
         else:
             st.info("Secretary mode: reporting access only (no user/course management).")
 
-# --- Admin Reports (Admin or Secretary) ---
+# --- Admin Reports (Admin) ---
 if "Reports" in tab_index:
     with tabs[tab_index["Reports"]]:
         st.subheader("Admin Reports")
-        if not (is_admin(u_email) or is_secretary(u_email)):
+        if not (is_admin(u_email)):
             st.info("Access restricted.")
             st.stop()
 
