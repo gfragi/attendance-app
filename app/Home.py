@@ -19,6 +19,7 @@ APP_TITLE = "Centralized Attendance for University Courses"
 
 EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "@hua.gr")
 SESSION_DEFAULT_MINUTES = int(os.getenv("SESSION_DEFAULT_MINUTES", "15"))
+OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/attendance.db")
 engine = create_engine(DATABASE_URL, echo=False, future=True)
@@ -239,6 +240,7 @@ def is_instructor(email: str) -> bool:
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
+@st.cache_data
 def _b64(path: str) -> str:
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
@@ -254,7 +256,8 @@ user_email = u.get("email") or ""
 right_block = (
     f"""<div class="hua-right">
           Signed in as <strong>{user_email}</strong>
-          &nbsp; | &nbsp; <a href="/oauth2/sign_out" target="_top">Logout</a>
+          &nbsp; | &nbsp; <a href="{LOGOUT_URL}" target="_top">Logout</a>
+
         </div>"""
     if user_email else ""
 )
@@ -295,52 +298,46 @@ st.markdown(
 # =============================
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
+
+
 def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
 if REQUIRE_SSO and need_sso_claims():
     st_html(
-        """
+        f"""
         <script>
-        (async () => {
-          try {
-            // Always operate on the *top* page (avoid iframe/sandbox issues)
+        (async () => {{
+          try {{
             const topWin = window.top || window;
             const here   = new URL(topWin.location.href);
 
-            // Ask oauth2-proxy who we are (same-origin, cookie-based)
-            const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
-
-            if (!res.ok) {
-              // Not logged in at proxy -> start login and return here
-              topWin.location.href = '/oauth2/start?rd=' + encodeURIComponent(here.toString());
+            const res = await fetch('{OAUTH2_PREFIX}/userinfo', {{ credentials: 'include' }});
+            if (!res.ok) {{
+              topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(here.toString());
               return;
-            }
+            }}
 
             const data = await res.json();
-
-            // Put claims into query params for Streamlit to read on next run
             if (data && data.email) here.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data && (data.name || data.user)) {
-              here.searchParams.set('sso_name', String(data.name || data.user));
-            }
+            if (data && (data.name || data.user)) here.searchParams.set('sso_name', String(data.name || data.user));
 
-            // Replace so back button isn't polluted with the pre-claim URL
             topWin.location.replace(here.toString());
-          } catch (err) {
-            // Worst case: bounce to login route to refresh cookies
+          }} catch (err) {{
             const u = new URL((window.top||window).location.href);
-            (window.top||window).location.href = '/oauth2/start?rd=' + encodeURIComponent(u.toString());
-          }
-        })();
+            (window.top||window).location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(u.toString());
+          }}
+        }})();
         </script>
         """,
-        height=1,  # non-zero so Streamlit mounts it reliably
+        height=1,
     )
     st.stop()
 
-
+u = current_user()
+u_email = (u.get("email") or "").strip().lower()
+u_name  = (u.get("name")  or "").strip()
 
 # =============================
 # Tabs
