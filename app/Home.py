@@ -20,8 +20,6 @@ APP_TITLE = "Centralized Attendance for University Courses"
 EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "@hua.gr")
 SESSION_DEFAULT_MINUTES = int(os.getenv("SESSION_DEFAULT_MINUTES", "15"))
 OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
-
-OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
 LOGOUT_URL = f"{OAUTH2_PREFIX}/sign_out"
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/attendance.db")
@@ -224,7 +222,6 @@ def course_attendance_rates(df: pd.DataFrame):
 # Auth / Roles
 # =============================
 def current_user():
-    # SSO bridge writes sso_email/sso_name to URL query
     params = st.query_params
     email = params.get("sso_email")
     name  = params.get("sso_name")
@@ -238,24 +235,39 @@ def is_admin(email: str) -> bool:
 def is_instructor(email: str) -> bool:
     return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
 
-
 # =============================
 # Page chrome (logo + logout) and SSO bootstrap
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-# retry guard
+# Bridge so sandboxed components can ask the top window to navigate
+st.markdown(
+    """
+    <script>
+      window.addEventListener('message', (e) => {
+        if (!e || !e.data || typeof e.data !== 'object') return;
+        if (e.data.type === 'sso-redirect' && e.data.url) {
+          window.location.href = e.data.url;
+        }
+        if (e.data.type === 'sso-replace' && e.data.url) {
+          window.location.replace(e.data.url);
+        }
+      }, false);
+    </script>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Retry guard
 st.session_state.setdefault("sso_boot_tries", 0)
 
-REQUIRE_SSO   = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
-OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
-LOGOUT_URL    = f"{OAUTH2_PREFIX}/sign_out"
+REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
 def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-# ---- SSO bootstrap: only if we need claims and haven't tried too many times
+# SSO bootstrap
 if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     st.session_state["sso_boot_tries"] += 1
     st_html(
@@ -267,8 +279,7 @@ if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
         (async () => {{
           const topWin = window.top || window;
           const cur    = new URL(topWin.location.href);
-          const hash   = cur.hash;    // preserve hash fragment
-          cur.hash = "";              // we add it back later
+          const hash   = cur.hash; cur.hash = "";
 
           function goLogin() {{
             const rd = encodeURIComponent(cur.toString() + hash);
@@ -288,7 +299,6 @@ if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
             if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
             if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
 
-            // replace (no history spam) and restore hash
             topWin.location.replace(cur.toString() + hash);
           }} catch (e) {{
             goLogin();
@@ -300,10 +310,23 @@ if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     )
     st.stop()
 
-# after bootstrap, read the claims once
-u = {"email": (st.query_params.get("sso_email") or "").strip().lower(),
-     "name":  (st.query_params.get("sso_name")  or "").strip()}
-u_email, u_name = u["email"], u["name"]
+# Read claims once
+u = current_user()
+u_email = (u.get("email") or "").strip().lower()
+u_name  = (u.get("name")  or "").strip()
+
+# Logo (inline, safe)
+@st.cache_data
+def _b64_or_empty(path: str) -> str:
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
+LOGO_PATH = Path(__file__).parent / "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
+LOGO_DATA_B64 = _b64_or_empty(str(LOGO_PATH))
+LOGO_DATA_URL = f"data:image/png;base64,{LOGO_DATA_B64}" if LOGO_DATA_B64 else ""
 
 right_block = (
     f"""<div class="hua-right">
@@ -332,7 +355,7 @@ st.markdown(
     <div class="hua-header">
       <div class="hua-left">
         <a class="hua-logo" href="https://dit.hua.gr/" target="_blank" rel="noopener">
-          <img src="{LOGO_DATA}" alt="Harokopio University - Dept. of Informatics & Telematics"/>
+          {"<img src='" + LOGO_DATA_URL + "' alt='Harokopio University - Dept. of Informatics & Telematics'/>" if LOGO_DATA_URL else ""}
         </a>
         <div class="hua-title">
           <p class="line1">Centralized Attendance for</p>
@@ -345,6 +368,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Visible fallback if somehow still not signed
 if REQUIRE_SSO and not u_email:
     st.info("You are not signed in. Use the university login.")
     st.markdown(f'<a href="{OAUTH2_PREFIX}/start?rd=" id="fallback_sso">Sign in now</a>', unsafe_allow_html=True)
@@ -357,25 +381,20 @@ if REQUIRE_SSO and not u_email:
     """, height=1)
     st.stop()
 
-
+# =============================
 # Tabs
 # =============================
-
-# ---------- Build tab list based on role ----------
 labels = ["Student Check-in"]
 if is_instructor(u_email):
     labels.append("Instructor Panel")
 if is_admin(u_email):
     labels += ["Admin Panel", "Reports"]
 labels.append("Help")
-
 tabs = st.tabs(labels)
-
-# We’ll keep an index map for clarity
 tab_index = {name: i for i, name in enumerate(labels)}
 
 # ----------------------------------
-# Student public check-in (with token + optional auto-check)
+# Student public check-in
 # ----------------------------------
 with tabs[tab_index["Student Check-in"]]:
     st.subheader("Student Check-in")
@@ -384,45 +403,33 @@ with tabs[tab_index["Student Check-in"]]:
     session_token = params.get("session", None)
     autocheck = str(params.get("autocheckin", "")).lower() in {"1", "true", "yes"}
 
-    # Helper: do a server-side auto check-in (no form)
     def do_autocheckin(db, sess, email_from_sso: str, name_from_sso: str | None):
-        # derive a display name if SSO didn't provide one
         def _derive_name(email_: str) -> str:
-            local = email_.split("@", 1)[0]
-            local = local.replace(".", " ").replace("_", " ").strip()
+            local = email_.split("@", 1)[0].replace(".", " ").replace("_", " ").strip()
             return " ".join(w.capitalize() for w in local.split())
 
         student_email = email_from_sso.strip().lower()
         student_name  = (name_from_sso or _derive_name(student_email)).strip()
 
-        exists = db.query(Attendance).filter_by(
-            session_id=sess.id, student_email=student_email
-        ).first()
+        exists = db.query(Attendance).filter_by(session_id=sess.id, student_email=student_email).first()
         if exists:
             st.info("You are already recorded for this session.")
             return
 
-        rec = Attendance(
-            session_id=sess.id,
-            student_name=student_name,
-            student_email=student_email,
-            created_at=now_utc(),
-        )
+        rec = Attendance(session_id=sess.id, student_name=student_name,
+                         student_email=student_email, created_at=now_utc())
         db.add(rec); db.commit()
         st.success("✅ Attendance recorded. Thank you!")
 
     if not session_token:
-        # Manual entry path (kept for desktop or when someone types the URL)
         session_token = st.text_input("Session token (from QR link):", value=session_token or "")
 
-    # When either user pressed "Load Session" or we already have a token from URL
     if st.button("Load Session") or session_token:
         db = get_db()
         sess = db.query(Session).filter_by(token=session_token).first()
         if not sess:
             st.error("Invalid session token.")
         else:
-            # Basic session checks
             if not sess.is_open:
                 st.warning("This session is closed.")
             elif now_utc() > to_aware_utc(sess.expires_at):
@@ -434,15 +441,12 @@ with tabs[tab_index["Student Check-in"]]:
                 sso_name  = u_name or None
 
                 if autocheck:
-                    # Auto mode: require SSO email; if missing, SSO bootstrap earlier will handle it
                     if not sso_email:
                         st.error("Authentication is required to auto check-in. Please sign in and retry.")
                     else:
                         do_autocheckin(db, sess, sso_email, sso_name)
-                        # In auto mode we stop after recording to avoid re-submission on reruns
                         st.stop()
 
-                # Fallback to form (desktop/manual)
                 default_name = sso_name or ""
                 with st.form("checkin_form"):
                     student_name = st.text_input("Full name (Ονοματεπώνυμο)", value=default_name)
@@ -465,12 +469,10 @@ with tabs[tab_index["Student Check-in"]]:
                         if exists:
                             st.info("You are already recorded for this session.")
                         else:
-                            rec = Attendance(
-                                session_id=sess.id,
-                                student_name=" ".join(student_name.split()),
-                                student_email=final_email,
-                                created_at=now_utc(),
-                            )
+                            rec = Attendance(session_id=sess.id,
+                                             student_name=" ".join(student_name.split()),
+                                             student_email=final_email,
+                                             created_at=now_utc())
                             db.add(rec); db.commit()
                             st.success("Attendance recorded. Thank you!")
 
@@ -489,34 +491,24 @@ if "Instructor Panel" in tab_index:
         else:
             colA, colB = st.columns([2, 1])
             with colA:
-                course = st.selectbox(
-                    "Select course",
-                    options=my_courses,
-                    format_func=lambda c: f"{c.code} — {c.title}"
-                )
+                course = st.selectbox("Select course", options=my_courses,
+                                      format_func=lambda c: f"{c.code} — {c.title}")
             with colB:
-                duration = st.number_input(
-                    "Session duration (minutes)",
-                    min_value=5, max_value=240, value=SESSION_DEFAULT_MINUTES,
-                    help="How long the QR/link accepts check-ins."
-                )
+                duration = st.number_input("Session duration (minutes)",
+                                           min_value=5, max_value=240, value=SESSION_DEFAULT_MINUTES,
+                                           help="How long the QR/link accepts check-ins.")
 
             if st.button("Open new attendance session", help="Creates a timed session and QR/URL for students to scan."):
                 token = gen_token()
-                new_sess = Session(
-                    course_id=course.id,
-                    start_time=now_utc(),
-                    is_open=True,
-                    token=token,
-                    expires_at=now_utc() + timedelta(minutes=int(duration)),
-                )
+                new_sess = Session(course_id=course.id, start_time=now_utc(),
+                                   is_open=True, token=token,
+                                   expires_at=now_utc() + timedelta(minutes=int(duration)))
                 db.add(new_sess); db.commit()
                 st.success("Session opened.")
 
             st.markdown("### Active Sessions")
             active = db.query(Session).filter_by(course_id=course.id, is_open=True)\
                     .order_by(Session.start_time.desc()).all()
-            # Hide already-expired sessions
             now = now_utc()
             active = [s for s in active if s.is_open and to_aware_utc(s.expires_at) > now]
 
@@ -545,7 +537,6 @@ if "Instructor Panel" in tab_index:
                         count = db.query(Attendance).filter_by(session_id=sess.id).count()
                         st.metric("Current check-ins", count)
 
-            # Reports
             st.markdown("### 📊 Instructor Reports")
             date_col1, date_col2, grp_col = st.columns([1,1,1])
             with date_col1:
@@ -558,41 +549,37 @@ if "Instructor Panel" in tab_index:
             freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
             freq = freq_map[bucket]
 
-            course_choice = st.multiselect(
-                "Courses",
-                options=my_courses,
-                format_func=lambda c: f"{c.code} — {c.title}",
-                default=my_courses,
-                key="instructor_courses"
-            )
+            course_choice = st.multiselect("Courses", options=my_courses,
+                                           format_func=lambda c: f"{c.code} — {c.title}",
+                                           default=my_courses, key="instructor_courses")
             course_ids_sel = [c.id for c in course_choice] or [c.id for c in my_courses]
 
             if st.button("Run report", key="instructor_run_report"):
-                q = get_report_base_query(
-                    db,
-                    instructor_email=u_email,
-                    course_ids=course_ids_sel,
-                    date_from=pd.Timestamp(date_from).tz_localize("UTC"),
-                    date_to=pd.Timestamp(date_to).tz_localize("UTC"),
-                )
+                q = get_report_base_query(db, instructor_email=u_email, course_ids=course_ids_sel,
+                                          date_from=pd.Timestamp(date_from).tz_localize("UTC"),
+                                          date_to=pd.Timestamp(date_to).tz_localize("UTC"))
                 df = df_from_query(q)
                 st.subheader("Raw check-ins (sortable)")
                 st.dataframe(df.sort_values("check_in_at", ascending=False), use_container_width=True)
-                st.download_button("Download CSV (raw)", df.to_csv(index=False).encode(), file_name="instructor_checkins.csv", mime="text/csv")
+                st.download_button("Download CSV (raw)", df.to_csv(index=False).encode(),
+                                   file_name="instructor_checkins.csv", mime="text/csv")
 
                 st.subheader(f"Aggregates per {bucket.split()[0]} & course")
                 grouped, pivot = group_df(df, freq=freq)
                 st.dataframe(grouped, use_container_width=True)
-                st.download_button("Download CSV (grouped)", grouped.to_csv(index=False).encode(), file_name="instructor_grouped.csv", mime="text/csv")
+                st.download_button("Download CSV (grouped)", grouped.to_csv(index=False).encode(),
+                                   file_name="instructor_grouped.csv", mime="text/csv")
 
                 st.subheader("Pivot (rows=time bucket, columns=course_code)")
                 st.dataframe(pivot, use_container_width=True)
-                st.download_button("Download CSV (pivot)", pivot.to_csv().encode(), file_name="instructor_pivot.csv", mime="text/csv")
+                st.download_button("Download CSV (pivot)", pivot.to_csv().encode(),
+                                   file_name="instructor_pivot.csv", mime="text/csv")
 
                 st.subheader("Per-student attendance rate (%) per course")
                 rates = course_attendance_rates(df)
                 st.dataframe(rates, use_container_width=True)
-                st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(), file_name="instructor_rates.csv", mime="text/csv")
+                st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
+                                   file_name="instructor_rates.csv", mime="text/csv")
 
 # --- Admin Panel ---
 if "Admin Panel" in tab_index:
@@ -604,53 +591,50 @@ if "Admin Panel" in tab_index:
 
         db = get_db()
 
-        if is_admin(u_email):
-            st.markdown("#### Users")
-            with st.form("add_user_form"):
-                name = st.text_input("Name")
-                email = st.text_input("Email")
-                role = st.selectbox("Role", ["admin", "instructor"])
-                add_u = st.form_submit_button("Add user")
-            if add_u:
-                if not name or not email:
-                    st.error("Name and email required.")
-                elif db.query(User).filter_by(email=email.lower().strip()).first():
-                    st.warning("User already exists.")
-                else:
-                    db.add(User(name=name, email=email.lower().strip(), role=role)); db.commit()
-                    st.success("User added.")
-
-            st.markdown("#### Courses")
-            with st.form("add_course_form"):
-                code = st.text_input("Course code")
-                title = st.text_input("Course title")
-                add_c = st.form_submit_button("Add course")
-            if add_c:
-                if not code or not title:
-                    st.error("Code and title required.")
-                elif db.query(Course).filter_by(code=code).first():
-                    st.warning("Course already exists.")
-                else:
-                    db.add(Course(code=code, title=title)); db.commit()
-                    st.success("Course added.")
-
-            st.markdown("#### Assign Instructor to Course")
-            users = db.query(User).filter_by(role="instructor").all()
-            courses = db.query(Course).all()
-            if users and courses:
-                u_sel = st.selectbox("Instructor", users, format_func=lambda u_: f"{u_.name} ({u_.email})")
-                c_sel = st.selectbox("Course", courses, format_func=lambda c: f"{c.code} — {c.title}")
-                if st.button("Assign"):
-                    exists = db.query(CourseInstructor).filter_by(course_id=c_sel.id, user_id=u_sel.id).first()
-                    if exists:
-                        st.info("Already assigned.")
-                    else:
-                        db.add(CourseInstructor(course_id=c_sel.id, user_id=u_sel.id)); db.commit()
-                        st.success("Assigned.")
+        st.markdown("#### Users")
+        with st.form("add_user_form"):
+            name = st.text_input("Name")
+            email = st.text_input("Email")
+            role = st.selectbox("Role", ["admin", "instructor"])
+            add_u = st.form_submit_button("Add user")
+        if add_u:
+            if not name or not email:
+                st.error("Name and email required.")
+            elif db.query(User).filter_by(email=email.lower().strip()).first():
+                st.warning("User already exists.")
             else:
-                st.info("Add at least one instructor and one course.")
+                db.add(User(name=name, email=email.lower().strip(), role=role)); db.commit()
+                st.success("User added.")
+
+        st.markdown("#### Courses")
+        with st.form("add_course_form"):
+            code = st.text_input("Course code")
+            title = st.text_input("Course title")
+            add_c = st.form_submit_button("Add course")
+        if add_c:
+            if not code or not title:
+                st.error("Code and title required.")
+            elif db.query(Course).filter_by(code=code).first():
+                st.warning("Course already exists.")
+            else:
+                db.add(Course(code=code, title=title)); db.commit()
+                st.success("Course added.")
+
+        st.markdown("#### Assign Instructor to Course")
+        users = db.query(User).filter_by(role="instructor").all()
+        courses = db.query(Course).all()
+        if users and courses:
+            u_sel = st.selectbox("Instructor", users, format_func=lambda u_: f"{u_.name} ({u_.email})")
+            c_sel = st.selectbox("Course", courses, format_func=lambda c: f"{c.code} — {c.title}")
+            if st.button("Assign"):
+                exists = db.query(CourseInstructor).filter_by(course_id=c_sel.id, user_id=u_sel.id).first()
+                if exists:
+                    st.info("Already assigned.")
+                else:
+                    db.add(CourseInstructor(course_id=c_sel.id, user_id=u_sel.id)); db.commit()
+                    st.success("Assigned.")
         else:
-            st.info("Secretary mode: reporting access only (no user/course management).")
+            st.info("Add at least one instructor and one course.")
 
 # --- Admin Reports (Admin) ---
 if "Reports" in tab_index:
@@ -674,46 +658,38 @@ if "Reports" in tab_index:
         freq_map = {"Day (D)":"D", "Week (W-MON)":"W-MON", "Month (MS)":"MS"}
         freq = freq_map[bucket]
 
-        course_choice = st.multiselect(
-            "Courses",
-            options=all_courses,
-            format_func=lambda c: f"{c.code} — {c.title}",
-            default=all_courses,
-            key="admin_courses"
-        )
+        course_choice = st.multiselect("Courses", options=all_courses,
+                                       format_func=lambda c: f"{c.code} — {c.title}",
+                                       default=all_courses, key="admin_courses")
         course_ids_sel = [c.id for c in course_choice] if course_choice else None
 
         if st.button("Run admin report"):
-            q = get_report_base_query(
-                db,
-                instructor_email=None,
-                course_ids=course_ids_sel,
-                date_from=pd.Timestamp(date_from).tz_localize("UTC"),
-                date_to=pd.Timestamp(date_to).tz_localize("UTC"),
-            )
+            q = get_report_base_query(db, instructor_email=None, course_ids=course_ids_sel,
+                                      date_from=pd.Timestamp(date_from).tz_localize("UTC"),
+                                      date_to=pd.Timestamp(date_to).tz_localize("UTC"))
             df = df_from_query(q)
 
             st.markdown("#### Raw")
             st.dataframe(df.sort_values(["course_code","check_in_at"]), use_container_width=True)
             st.download_button("Download CSV (raw)", df.to_csv(index=False).encode(),
-                            file_name="admin_checkins_raw.csv", mime="text/csv")
+                               file_name="admin_checkins_raw.csv", mime="text/csv")
 
             st.markdown("#### Aggregated per time bucket & course")
             grouped, pivot = group_df(df, freq=freq)
             st.dataframe(grouped, use_container_width=True)
             st.download_button("Download CSV (grouped)", grouped.to_csv(index=False).encode(),
-                            file_name="admin_grouped.csv", mime="text/csv")
+                               file_name="admin_grouped.csv", mime="text/csv")
 
             st.markdown("#### Pivot")
             st.dataframe(pivot, use_container_width=True)
             st.download_button("Download CSV (pivot)", pivot.to_csv().encode(),
-                            file_name="admin_pivot.csv", mime="text/csv")
+                               file_name="admin_pivot.csv", mime="text/csv")
 
             st.markdown("#### Per-student attendance rate by course")
             rates = course_attendance_rates(df)
             st.dataframe(rates, use_container_width=True)
             st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
-                            file_name="admin_rates.csv", mime="text/csv")
+                               file_name="admin_rates.csv", mime="text/csv")
 
 # --- Help ---
 with tabs[tab_index["Help"]]:
@@ -750,3 +726,6 @@ with tabs[tab_index["Help"]]:
 - If the page keeps “loading”, the proxy must allow **WebSocket** upgrade headers.  
 - If you see “Not authenticated”, confirm `REQUIRE_SSO=true` and OAuth2 Proxy is in front.
 """)
+    st.markdown("----")
+    st.markdown("© Harokopio University of Athens - Dept. of Informatics & Telematics | Developed by DIT | 2025")
+
