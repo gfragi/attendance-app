@@ -243,6 +243,9 @@ def is_instructor(email: str) -> bool:
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
+if "sso_boot_tries" not in st.session_state:
+    st.session_state["sso_boot_tries"] = 0
+
 @st.cache_data
 def _b64(path: str) -> str:
     with open(path, "rb") as f:
@@ -260,8 +263,9 @@ def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
-    st.session_state["sso_boot_tries"] += 1
+tries = st.session_state.get("sso_boot_tries", 0)
+if REQUIRE_SSO and need_sso_claims() and tries < 2:
+    st.session_state["sso_boot_tries"] = tries + 1
 
     # Visible fallback so users can click if JS fails
     st.markdown(
@@ -330,17 +334,9 @@ if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     st.stop()
 
 # ---- Read claims ONCE and render header AFTER we know them ----
-def current_user():
-    params = st.query_params
-    email = params.get("sso_email")
-    name  = params.get("sso_name")
-    email = email.strip().lower() if isinstance(email, str) else None
-    name  = name.strip()           if isinstance(name, str)  else None
-    return {"email": email, "name": name}
 
-u = current_user()
-u_email = (u.get("email") or "").strip().lower()
-u_name  = (u.get("name")  or "").strip()
+u_email = (st.query_params.get("sso_email") or "").strip().lower()
+u_name  = (st.query_params.get("sso_name")  or "").strip()
 
 right_block = (
     f"""<div class="hua-right">
