@@ -4,6 +4,7 @@ import uuid
 import base64
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from streamlit.components.v1 import html as st_html
 
 import pandas as pd
 import streamlit as st
@@ -289,21 +290,54 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-# Require SSO?
+# =============================
+# Main logic
+# =============================
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
-REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
+def need_sso_claims() -> bool:
+    p = st.query_params
+    return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-u = current_user()
-u_email = u.get("email") or ""
-u_name = u.get("name") or ""
+if REQUIRE_SSO and need_sso_claims():
+    st_html(
+        """
+        <script>
+        (async () => {
+          try {
+            // Always operate on the *top* page (avoid iframe/sandbox issues)
+            const topWin = window.top || window;
+            const here   = new URL(topWin.location.href);
 
-if REQUIRE_SSO and not u_email:
-    st.info("You are not signed in. Please use the university login. (If this persists, the proxy needs to append SSO params.)")
+            // Ask oauth2-proxy who we are (same-origin, cookie-based)
+            const res = await fetch('/oauth2/userinfo', { credentials: 'include' });
 
-if u_email and not u_email.endswith(EMAIL_DOMAIN):
-    st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
+            if (!res.ok) {
+              // Not logged in at proxy -> start login and return here
+              topWin.location.href = '/oauth2/start?rd=' + encodeURIComponent(here.toString());
+              return;
+            }
+
+            const data = await res.json();
+
+            // Put claims into query params for Streamlit to read on next run
+            if (data && data.email) here.searchParams.set('sso_email', String(data.email).toLowerCase());
+            if (data && (data.name || data.user)) {
+              here.searchParams.set('sso_name', String(data.name || data.user));
+            }
+
+            // Replace so back button isn't polluted with the pre-claim URL
+            topWin.location.replace(here.toString());
+          } catch (err) {
+            // Worst case: bounce to login route to refresh cookies
+            const u = new URL((window.top||window).location.href);
+            (window.top||window).location.href = '/oauth2/start?rd=' + encodeURIComponent(u.toString());
+          }
+        })();
+        </script>
+        """,
+        height=1,  # non-zero so Streamlit mounts it reliably
+    )
     st.stop()
 
 
