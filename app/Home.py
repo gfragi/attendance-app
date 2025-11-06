@@ -359,49 +359,6 @@ if u_email and not u_email.endswith(EMAIL_DOMAIN):
     st.error(f"Only accounts under **{EMAIL_DOMAIN}** are allowed.")
     st.stop()
 
-# Top bar with logo (left) and logout (right)
-def _embed_logo():
-    logo_path = os.path.join(os.path.dirname(__file__), "assets", "HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png")
-    if not os.path.exists(logo_path):
-        return ""
-    with open(logo_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
-    return f"data:image/png;base64,{b64}"
-
-logo_data_url = _embed_logo()
-logout_url = "/oauth2/sign_out"
-department_home_url = "https://dit.hua.gr/"
-
-st.markdown(
-    f"""
-    <style>
-      .top-bar {{
-        display:flex;align-items:center;justify-content:space-between;
-        padding:0.6rem 1.2rem;background:#f8f9fa;border-bottom:1px solid #e0e0e0;
-        position:sticky;top:0;z-index:999;
-      }}
-      .top-left {{ display:flex;align-items:center;gap:1rem; }}
-      .top-left img {{ height:80px; width:auto; }}
-      .top-title {{ font-size:1.25rem;font-weight:700;color:#222; }}
-      .top-right {{ color:#333;font-size:0.95rem; }}
-      .top-right a {{ color:#007BFF;text-decoration:none;font-weight:500; }}
-      .top-right a:hover {{ text-decoration:underline; }}
-    </style>
-    <div class="top-bar">
-      <div class="top-left">
-        <a href="{department_home_url}" target="_blank">
-          {'<img src="'+logo_data_url+'" alt="Department Logo">' if logo_data_url else ''}
-        </a>
-        <div class="top-title">{APP_TITLE}</div>
-      </div>
-      <div class="top-right">
-        Signed in as <strong>{u_email or 'Guest'}</strong>
-        {(" | <a href='"+logout_url+"' target='_top'>Logout</a>") if u_email else ""}
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
 
 # =============================
 # Tabs
