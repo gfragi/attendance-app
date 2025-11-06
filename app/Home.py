@@ -21,6 +21,9 @@ EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "@hua.gr")
 SESSION_DEFAULT_MINUTES = int(os.getenv("SESSION_DEFAULT_MINUTES", "15"))
 OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
 
+OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
+LOGOUT_URL = f"{OAUTH2_PREFIX}/sign_out"
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/attendance.db")
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 Base = declarative_base()
@@ -243,23 +246,69 @@ st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 @st.cache_data
 def _b64(path: str) -> str:
     with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+        import base64 as _b
+        return _b.b64encode(f.read()).decode()
 
 LOGO_PATH = Path(__file__).parent / "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
 LOGO_DATA = f"data:image/png;base64,{_b64(str(LOGO_PATH))}"
 
+# ---- SSO bootstrap (run before reading claims) ----
+REQUIRE_SSO   = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
+OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
+LOGOUT_URL    = f"{OAUTH2_PREFIX}/sign_out"
+
+def need_sso_claims() -> bool:
+    p = st.query_params
+    return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
+
+if REQUIRE_SSO and need_sso_claims():
+    st_html(
+        f"""
+        <script>
+        (async () => {{
+          try {{
+            const topWin = window.top || window;
+            const here   = new URL(topWin.location.href);
+
+            // Cache-bust to avoid stale /userinfo results (esp. Chrome)
+            const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
+              credentials: 'include',
+              cache: 'no-store'
+            }});
+
+            if (!res.ok) {{
+              topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(here.toString());
+              return;
+            }}
+
+            const data = await res.json();
+            if (data && data.email) here.searchParams.set('sso_email', String(data.email).toLowerCase());
+            if (data && (data.name || data.user)) here.searchParams.set('sso_name', String(data.name || data.user));
+
+            // Replace (not push) so back button is clean
+            topWin.location.replace(here.toString());
+          }} catch (err) {{
+            const u = new URL((window.top || window).location.href);
+            (window.top || window).location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(u.toString());
+          }}
+        }})();
+        </script>
+        """,
+        height=1,
+    )
+    st.stop()
+
+# ---- Read claims ONCE and render header AFTER we know them ----
 u = current_user()
-DEPT_URL   = "https://dit.hua.gr/"
-LOGOUT_URL = "/oauth2/sign_out"
-user_email = u.get("email") or ""
+u_email = (u.get("email") or "").strip().lower()
+u_name  = (u.get("name")  or "").strip()
 
 right_block = (
     f"""<div class="hua-right">
-          Signed in as <strong>{user_email}</strong>
+          Signed in as <strong>{u_email}</strong>
           &nbsp; | &nbsp; <a href="{LOGOUT_URL}" target="_top">Logout</a>
-
         </div>"""
-    if user_email else ""
+    if u_email else ""
 )
 
 st.markdown(
@@ -293,51 +342,11 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-# =============================
-# Main logic
-# =============================
-REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
-
-
-def need_sso_claims() -> bool:
-    p = st.query_params
-    return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
-
-if REQUIRE_SSO and need_sso_claims():
-    st_html(
-        f"""
-        <script>
-        (async () => {{
-          try {{
-            const topWin = window.top || window;
-            const here   = new URL(topWin.location.href);
-
-            const res = await fetch('{OAUTH2_PREFIX}/userinfo', {{ credentials: 'include' }});
-            if (!res.ok) {{
-              topWin.location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(here.toString());
-              return;
-            }}
-
-            const data = await res.json();
-            if (data && data.email) here.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data && (data.name || data.user)) here.searchParams.set('sso_name', String(data.name || data.user));
-
-            topWin.location.replace(here.toString());
-          }} catch (err) {{
-            const u = new URL((window.top||window).location.href);
-            (window.top||window).location.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(u.toString());
-          }}
-        }})();
-        </script>
-        """,
-        height=1,
-    )
-    st.stop()
-
-u = current_user()
-u_email = (u.get("email") or "").strip().lower()
-u_name  = (u.get("name")  or "").strip()
+# Optional: visible fallback sign-in (JS disabled or blocked)
+if REQUIRE_SSO and not u_email:
+    st.info("You are not signed in. Use the university login.")
+    st.markdown(f"[Sign in now]({OAUTH2_PREFIX}/start?rd=.)")
 
 # =============================
 # Tabs
@@ -412,8 +421,8 @@ with tabs[tab_index["Student Check-in"]]:
             else:
                 st.success(f"Course: {sess.course.title} — open until {fmt_local(sess.expires_at)}")
 
-                sso_email = (u.get("email") or "").strip().lower()
-                sso_name  = (u.get("name") or "").strip() or None
+                sso_email = u_email
+                sso_name  = u_name or None
 
                 if autocheck:
                     # Auto mode: require SSO email; if missing, SSO bootstrap earlier will handle it
