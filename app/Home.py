@@ -347,6 +347,8 @@ st.markdown(
 if REQUIRE_SSO and not u_email:
     st.info("You are not signed in. Use the university login.")
     st.markdown(f"[Sign in now]({OAUTH2_PREFIX}/start?rd=.)")
+    st.stop()
+
 
 # =============================
 # Tabs
