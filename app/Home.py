@@ -29,7 +29,6 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 
 # Role allowlists (comma-separated emails)
 ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
-SECRETARY_EMAILS = {e.strip().lower() for e in os.getenv("SECRETARY_EMAILS", "").split(",") if e.strip()}
 INSTRUCTOR_EMAILS = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",") if e.strip()}
 
 # =============================
@@ -231,9 +230,6 @@ def current_user():
 
 def is_admin(email: str) -> bool:
     return bool(email) and email in ADMIN_EMAILS
-
-def is_secretary(email: str) -> bool:
-    return bool(email) and email in SECRETARY_EMAILS
 
 def is_instructor(email: str) -> bool:
     return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
@@ -601,7 +597,7 @@ if "Instructor Panel" in tab_index:
 if "Admin Panel" in tab_index:
     with tabs[tab_index["Admin Panel"]]:
         st.subheader("Admin / Secretariat")
-        if not (is_admin(u_email) or is_secretary(u_email)):
+        if not (is_admin(u_email)):
             st.info("Access restricted.")
             st.stop()
 
@@ -655,11 +651,11 @@ if "Admin Panel" in tab_index:
         else:
             st.info("Secretary mode: reporting access only (no user/course management).")
 
-# --- Admin Reports (Admin or Secretary) ---
+# --- Admin Reports (Admin) ---
 if "Reports" in tab_index:
     with tabs[tab_index["Reports"]]:
         st.subheader("Admin Reports")
-        if not (is_admin(u_email) or is_secretary(u_email)):
+        if not (is_admin(u_email)):
             st.info("Access restricted.")
             st.stop()
 
