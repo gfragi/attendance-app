@@ -250,6 +250,7 @@ def _b64(path: str) -> str:
 LOGO_PATH = Path(__file__).parent / "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
 LOGO_DATA = f"data:image/png;base64,{_b64(str(LOGO_PATH))}"
 
+u = current_user()
 DEPT_URL   = "https://dit.hua.gr/"
 LOGOUT_URL = "/oauth2/sign_out"
 user_email = u.get("email") or "Guest"
