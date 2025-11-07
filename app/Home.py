@@ -225,19 +225,31 @@ def course_attendance_rates(df: pd.DataFrame):
 # Auth / Roles
 # =============================
 
-def current_user():
-    p = st.query_params
-    # proxy mode expects nginx to append these
-    if AUTH_MODE == "proxy":
-        email = p.get("sso_email") if isinstance(p.get("sso_email"), str) else None
-        name  = p.get("sso_name")  if isinstance(p.get("sso_name"),  str) else None
-    else:
-        # manual mode: let user type; still accept prefill via email/name
-        email = p.get("email") if isinstance(p.get("email"), str) else None
-        name  = p.get("name")  if isinstance(p.get("name"),  str) else None
+def _qp_first(key: str) -> str | None:
+    """Get first value from st.query_params for key, regardless of Streamlit version."""
+    q = st.query_params
+    if key not in q:
+        return None
+    v = q.get(key)
+    if isinstance(v, list):
+        return (v[0] or "").strip()
+    if isinstance(v, str):
+        return v.strip()
+    # Some versions expose a dict-like where indexing returns str
+    try:
+        return str(v).strip() if v is not None else None
+    except Exception:
+        return None
 
-    email = (email or "").strip().lower() or None
-    name  = (name  or "").strip() or None
+def current_user():
+    if AUTH_MODE == "proxy":
+        email = _qp_first("sso_email")
+        name  = _qp_first("sso_name")
+    else:
+        email = _qp_first("email")
+        name  = _qp_first("name")
+    email = (email or "").lower() or None
+    name  = (name  or "") or None
     return {"email": email, "name": name}
 
 def is_admin(email: str) -> bool:
@@ -258,7 +270,6 @@ def need_identity():
     return AUTH_MODE == "proxy" and not (u["email"])
 
 if need_identity():
-    # No JS, no meta refresh — just a plain link the user can click.
     st.info("You need to sign in with your university account.")
     st.markdown(
         f'<a id="sso_link" href="{OAUTH2_PREFIX}/start?rd=" target="_top">Continue to sign in</a>',
@@ -270,8 +281,10 @@ if need_identity():
           (function () {
             try {
               var a = document.getElementById('sso_link');
-              var cur = new URL(window.location.href);
-              a.href = '%s/start?rd=' + encodeURIComponent(cur.toString());
+              var loc = window.location;
+              // Build absolute current URL without fragment; oauth2-proxy usually doesn't need the hash.
+              var here = loc.origin + loc.pathname + loc.search;
+              a.href = '%s/start?rd=' + encodeURIComponent(here);
             } catch (e) {}
           })();
         </script>
