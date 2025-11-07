@@ -1,18 +1,14 @@
 import os
 import io
 import uuid
-import base64
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from streamlit.components.v1 import html as st_html
-import json
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
-from string import Template
 
 from urllib.parse import urlencode, quote
 
@@ -37,6 +33,8 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 # Role allowlists (comma-separated emails)
 ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
 INSTRUCTOR_EMAILS = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",") if e.strip()}
+
+AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()  # "manual" or "proxy"
 
 # =============================
 # Models
@@ -245,60 +243,50 @@ def is_instructor(email: str) -> bool:
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-
-REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
-
-def need_sso_claims() -> bool:
+def current_user():
     p = st.query_params
-    return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
+    # proxy mode expects nginx to append these
+    if AUTH_MODE == "proxy":
+        email = p.get("sso_email") if isinstance(p.get("sso_email"), str) else None
+        name  = p.get("sso_name")  if isinstance(p.get("sso_name"),  str) else None
+    else:
+        # manual mode: let user type; still accept prefill via email/name
+        email = p.get("email") if isinstance(p.get("email"), str) else None
+        name  = p.get("name")  if isinstance(p.get("name"),  str) else None
 
-# --- SSO gate: top-document JS (no iframes), with non-JS fallback ---
-if REQUIRE_SSO and need_sso_claims():
-    st.markdown(f"""
-    <div style="padding:12px">Signing you in… If nothing happens,
-      <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
-    </div>
+    email = (email or "").strip().lower() or None
+    name  = (name  or "").strip() or None
+    return {"email": email, "name": name}
 
-    <script>
-    (async () => {{
-      const here = new URL(window.location.href);
-      const hash = here.hash;            // keep hash (Streamlit uses it)
-      here.hash = "";
+def need_identity():
+    u = current_user()
+    # in proxy mode we *require* identity from nginx; otherwise we let the UI collect it
+    return AUTH_MODE == "proxy" and not (u["email"])
 
-      const login = () => {{
-        const rd = encodeURIComponent(here.toString() + hash);
-        window.location.href = '{OAUTH2_PREFIX}/start?rd=' + rd;
-      }};
-
-      try {{
-        const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
-          credentials: 'include',
-          cache: 'no-store'
-        }});
-        if (!res.ok) return login();
-
-        const data = await res.json();
-        if (data && data.email)
-          here.searchParams.set('sso_email', String(data.email).toLowerCase());
-        if (data && (data.name || data.user))
-          here.searchParams.set('sso_name', String(data.name || data.user));
-
-        // History-safe replace, restore hash
-        window.location.replace(here.toString() + hash);
-      }} catch (e) {{
-        login();
-      }}
-    }})();
-    </script>
-
-    <noscript>
-        <p>JavaScript is disabled. Continue to sign in:</p>
-        <a href="{OAUTH2_PREFIX}/start?rd=." target="_top">Continue</a>
-    </noscript>
-    """, unsafe_allow_html=True)
+if need_identity():
+    # No JS, no meta refresh — just a plain link the user can click.
+    st.info("You need to sign in with your university account.")
+    st.markdown(
+        f'<a id="sso_link" href="{OAUTH2_PREFIX}/start?rd=" target="_top">Continue to sign in</a>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        """
+        <script>
+          (function () {
+            try {
+              var a = document.getElementById('sso_link');
+              var cur = new URL(window.location.href);
+              a.href = '%s/start?rd=' + encodeURIComponent(cur.toString());
+            } catch (e) {}
+          })();
+        </script>
+        """ % OAUTH2_PREFIX,
+        unsafe_allow_html=True
+    )
     st.stop()
 
-# ---- Read claims (after SSO gate) ----
+# After the gate, read the claims once for the rest of the app
 u = current_user()
 u_email = (u.get("email") or "").strip().lower()
 u_name  = (u.get("name")  or "").strip()
