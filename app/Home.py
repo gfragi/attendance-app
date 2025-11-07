@@ -292,21 +292,16 @@ if REQUIRE_SSO and need_sso_claims():
     </script>
 
     <noscript>
-      <p>JavaScript is required for automatic sign-in. You can continue manually:</p>
-      <a id="sso_link" href="{OAUTH2_PREFIX}/start" target="_top">Continue</a>
-      <script>
-        (function() {{
-          const a = document.getElementById('sso_link');
-          if (a) {{
-            const u = new URL(window.location.href);
-            a.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(u.toString());
-          }}
-        }})();
-      </script>
+        <p>JavaScript is disabled. Continue to sign in:</p>
+        <a href="{OAUTH2_PREFIX}/start?rd=." target="_top">Continue</a>
     </noscript>
     """, unsafe_allow_html=True)
     st.stop()
 
+# ---- Read claims (after SSO gate) ----
+u = current_user()
+u_email = (u.get("email") or "").strip().lower()
+u_name  = (u.get("name")  or "").strip()
 
 # =============================
 # Tabs
