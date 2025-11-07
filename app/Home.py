@@ -246,99 +246,67 @@ def is_instructor(email: str) -> bool:
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
 
-st.session_state.setdefault("sso_boot_tries", 0)
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
 def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-# --- SSO gate: plain link rendered in the top document (no iframes, no JS) ---
+# --- SSO gate: top-document JS (no iframes), with non-JS fallback ---
 if REQUIRE_SSO and need_sso_claims():
-    # Reconstruct the current public URL using your known public base
-    # (Streamlit cannot read the absolute URL server-side)
-    qs = urlencode(st.query_params, doseq=True)
-    base = PUBLIC_BASE_URL.rstrip("/")
-    here = f"{base}/" + (f"?{qs}" if qs else "")
-    signin_url = f"{OAUTH2_PREFIX}/start?rd={quote(here, safe='')}"
-
-    st.info("Sign-in required to continue.")
-    st.link_button("Sign in with University", signin_url)  # renders in top document
-    st.stop()
-
-# Claims (read once after bootstrap)
-u = current_user()
-u_email = (u.get("email") or "").strip().lower()
-u_name  = (u.get("name")  or "").strip()
-
-# --- Header (logo + right block) ---
-@st.cache_data
-def _b64_or_empty(path: str) -> str:
-    try:
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    except Exception:
-        return ""
-
-LOGO_PATH = Path(__file__).parent / "assets/HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
-LOGO_DATA_B64 = _b64_or_empty(str(LOGO_PATH))
-LOGO_DATA_URL = f"data:image/png;base64,{LOGO_DATA_B64}" if LOGO_DATA_B64 else ""
-
-right_block = (
-    f"""<div class="hua-right">
-          Signed in as <strong>{u_email}</strong>
-          &nbsp; | &nbsp; <a href="{LOGOUT_URL}" target="_top">Logout</a>
-        </div>"""
-    if u_email else ""
-)
-
-st.markdown(
-    f"""
-    <style>
-      .hua-header {{ display:flex; align-items:center; gap:18px;
-                     border-bottom:1px solid var(--secondary-background-color);
-                     padding:10px 8px 12px 8px; margin-bottom:6px; }}
-      .hua-left {{ display:flex; align-items:center; gap:16px; min-width:0; }}
-      .hua-logo img {{ height:52px; width:auto; display:block; }}
-      .hua-title {{ line-height:1.15; }}
-      .hua-title .line1, .hua-title .line2 {{ font-size:22px; font-weight:700; margin:0; white-space:nowrap; }}
-      .hua-right {{ margin-left:auto; text-align:right; font-size:15px; }}
-      .hua-right a {{ color:#0b6efd; text-decoration:none; }}
-      .hua-right a:hover {{ text-decoration:underline; }}
-      @media (max-width:680px) {{ .hua-title .line1, .hua-title .line2 {{ font-size:18px; }} .hua-logo img {{ height:44px; }} }}
-      @media (max-width:520px) {{ .hua-header {{ flex-wrap:wrap; gap:10px; }} .hua-right {{ width:100%; text-align:left; }} }}
-    </style>
-    <div class="hua-header">
-      <div class="hua-left">
-        <a class="hua-logo" href="https://dit.hua.gr/" target="_blank" rel="noopener">
-          {"<img src='" + LOGO_DATA_URL + "' alt='Harokopio University - Dept. of Informatics & Telematics'/>" if LOGO_DATA_URL else ""}
-        </a>
-        <div class="hua-title">
-          <p class="line1">Centralized Attendance for</p>
-          <p class="line2">University Courses</p>
-        </div>
-      </div>
-      {right_block}
+    st.markdown(f"""
+    <div style="padding:12px">Signing you in… If nothing happens,
+      <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
     </div>
-    """,
-    unsafe_allow_html=True,
-)
 
-# Fallback UI if still unauthenticated (rare, but avoids user being stuck)
-if REQUIRE_SSO and not u_email:
-    st.info("You are not signed in. Use the university login.")
-    st.markdown(
-        f'<a href="{OAUTH2_PREFIX}/start?rd=" id="fallback_sso" target="_top">Sign in now</a>',
-        unsafe_allow_html=True
-    )
-    st_html("""
+    <script>
+    (async () => {{
+      const here = new URL(window.location.href);
+      const hash = here.hash;            // keep hash (Streamlit uses it)
+      here.hash = "";
+
+      const login = () => {{
+        const rd = encodeURIComponent(here.toString() + hash);
+        window.location.href = '{OAUTH2_PREFIX}/start?rd=' + rd;
+      }};
+
+      try {{
+        const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
+          credentials: 'include',
+          cache: 'no-store'
+        }});
+        if (!res.ok) return login();
+
+        const data = await res.json();
+        if (data && data.email)
+          here.searchParams.set('sso_email', String(data.email).toLowerCase());
+        if (data && (data.name || data.user))
+          here.searchParams.set('sso_name', String(data.name || data.user));
+
+        // History-safe replace, restore hash
+        window.location.replace(here.toString() + hash);
+      }} catch (e) {{
+        login();
+      }}
+    }})();
+    </script>
+
+    <noscript>
+      <p>JavaScript is required for automatic sign-in. You can continue manually:</p>
+      <a id="sso_link" href="{OAUTH2_PREFIX}/start" target="_top">Continue</a>
       <script>
-        const link = document.getElementById('fallback_sso');
-        const cur  = new URL((window.top||window).location.href);
-        if (link) link.href = '/oauth2/start?rd=' + encodeURIComponent(cur.toString());
+        (function() {{
+          const a = document.getElementById('sso_link');
+          if (a) {{
+            const u = new URL(window.location.href);
+            a.href = '{OAUTH2_PREFIX}/start?rd=' + encodeURIComponent(u.toString());
+          }}
+        }})();
       </script>
-    """, height=1)
+    </noscript>
+    """, unsafe_allow_html=True)
     st.stop()
+
 
 # =============================
 # Tabs
