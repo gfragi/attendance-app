@@ -311,6 +311,71 @@ if AUTH_MODE == "manual":
             st.query_params["email"] = man_email.strip().lower()
             st.rerun()
 
+# --- Header (logo + title + optional signout) ---
+
+# small helper to read logo file as data URL
+@st.cache_data
+def _b64_or_empty(path: str) -> str:
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
+# point this to your real logo file
+LOGO_PATH = Path(__file__).parent / "assets" / "HUA-Logo-Informatics-Telematics-EN-30-Years-RGB.png"
+LOGO_DATA_B64 = _b64_or_empty(str(LOGO_PATH))
+LOGO_DATA_URL = f"data:image/png;base64,{LOGO_DATA_B64}" if LOGO_DATA_B64 else ""
+
+right_block = ""
+# show a signed-in indicator + logout when in proxy mode and we have identity
+if AUTH_MODE == "proxy" and u_email:
+    right_block = (
+        f"""<div class="hua-right">
+              Signed in as <strong>{u_email}</strong>
+              &nbsp; | &nbsp; <a href="{LOGOUT_URL}" target="_top">Logout</a>
+            </div>"""
+    )
+
+st.markdown(
+    f"""
+    <style>
+      .hua-header {{
+        display:flex; align-items:center; gap:18px;
+        border-bottom:1px solid var(--secondary-background-color);
+        padding:10px 8px 12px 8px; margin-bottom:6px;
+      }}
+      .hua-left {{ display:flex; align-items:center; gap:16px; min-width:0; }}
+      .hua-logo img {{ height:52px; width:auto; display:block; }}
+      .hua-title {{ line-height:1.15; }}
+      .hua-title .line1 {{ font-size:22px; font-weight:700; margin:0; white-space:nowrap; }}
+      .hua-right {{ margin-left:auto; text-align:right; font-size:15px; }}
+      .hua-right a {{ color:#0b6efd; text-decoration:none; }}
+      .hua-right a:hover {{ text-decoration:underline; }}
+      @media (max-width:680px) {{
+        .hua-title .line1 {{ font-size:18px; }}
+        .hua-logo img {{ height:44px; }}
+      }}
+      @media (max-width:520px) {{
+        .hua-header {{ flex-wrap:wrap; gap:10px; }}
+        .hua-right {{ width:100%; text-align:left; }}
+      }}
+    </style>
+    <div class="hua-header">
+      <div class="hua-left">
+        <a class="hua-logo" href="https://dit.hua.gr/" target="_blank" rel="noopener">
+          {"<img src='" + LOGO_DATA_URL + "' alt='Harokopio University - Dept. of Informatics & Telematics'/>" if LOGO_DATA_URL else ""}
+        </a>
+        <div class="hua-title">
+          <p class="line1">{APP_TITLE}</p>
+        </div>
+      </div>
+      {right_block}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 # =============================
 # Tabs
 # =============================
