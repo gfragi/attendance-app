@@ -39,6 +39,7 @@ AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()  # "manual" or "pro
 # =============================
 # Models
 # =============================
+
 class User(Base):
     __tablename__ = "users"
     id          = Column(Integer, primary_key=True)
@@ -297,6 +298,18 @@ if need_identity():
 u = current_user()
 u_email = (u.get("email") or "").strip().lower()
 u_name  = (u.get("name")  or "").strip()
+
+if AUTH_MODE == "manual":
+    with st.expander("Manual sign-in (admins/instructors)"):
+        man_name  = st.text_input("Your name", value=u_name or "")
+        man_email = st.text_input("Your academic email", value=u_email or "",
+                                  placeholder=f"name.surname{EMAIL_DOMAIN}")
+        use_it = st.button("Use this identity")
+        if use_it:
+            # write to URL so the rest of the app can pick it up
+            st.query_params["name"] = man_name.strip()
+            st.query_params["email"] = man_email.strip().lower()
+            st.rerun()
 
 # =============================
 # Tabs
