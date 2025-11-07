@@ -224,24 +224,6 @@ def course_attendance_rates(df: pd.DataFrame):
 # =============================
 # Auth / Roles
 # =============================
-def current_user():
-    params = st.query_params
-    email = params.get("sso_email")
-    name  = params.get("sso_name")
-    email = email.strip().lower() if isinstance(email, str) else None
-    name  = name.strip() if isinstance(name, str) else None
-    return {"email": email, "name": name}
-
-def is_admin(email: str) -> bool:
-    return bool(email) and email in ADMIN_EMAILS
-
-def is_instructor(email: str) -> bool:
-    return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
-
-# =============================
-# Page chrome (logo + logout) and SSO bootstrap
-# =============================
-st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
 def current_user():
     p = st.query_params
@@ -257,6 +239,18 @@ def current_user():
     email = (email or "").strip().lower() or None
     name  = (name  or "").strip() or None
     return {"email": email, "name": name}
+
+def is_admin(email: str) -> bool:
+    return bool(email) and email in ADMIN_EMAILS
+
+def is_instructor(email: str) -> bool:
+    return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
+
+# =============================
+# Page chrome (logo + logout) and SSO bootstrap
+# =============================
+st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
+
 
 def need_identity():
     u = current_user()
