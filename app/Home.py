@@ -726,6 +726,8 @@ with tabs[tab_index["Help"]]:
 - If the page keeps “loading”, the proxy must allow **WebSocket** upgrade headers.  
 - If you see “Not authenticated”, confirm `REQUIRE_SSO=true` and OAuth2 Proxy is in front.
 """)
-    st.markdown("----")
-    st.markdown("© Harokopio University of Athens - Dept. of Informatics & Telematics | Developed by DIT | 2025")
+
+
+st.markdown("----")
+st.markdown("© Harokopio University of Athens - Dept. of Informatics & Telematics | Developed by DIT | 2025")
 
