@@ -5,12 +5,14 @@ import base64
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from streamlit.components.v1 import html as st_html
+import json
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
+from string import Template
 
 # =============================
 # Config
@@ -267,44 +269,52 @@ def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-# 2) Bootstrap: try /userinfo → set claims → replace URL; else go to /start (with visible fallback)
+# SSO bootstrap (no f-string — avoids brace escaping issues)
 if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     st.session_state["sso_boot_tries"] += 1
-    st_html(f"""
+
+    html_tpl = Template(r"""
 <div style="padding:12px; font-size:15px;">
-  Signing you in… If nothing happens, <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
+  Signing you in… If nothing happens, <a id="sso_go" target="_top">click here</a>.
 </div>
 <script>
-(async () => {{
+(async () => {
+  const OAUTH2_PREFIX = $prefix;                 // injected safely as JSON string
   const parentWin = window.parent || window.top;
   const cur  = new URL(parentWin.location.href);
-  const hash = cur.hash; cur.hash = "";   // keep hash safe, add back later
+  const hash = cur.hash; cur.hash = "";
 
-  const goLogin = () => {{
+  const goLogin = () => {
     const rd  = encodeURIComponent(cur.toString() + hash);
-    const url = '{OAUTH2_PREFIX}/start?rd=' + rd;
+    const url = OAUTH2_PREFIX + '/start?rd=' + rd;
     const a = document.getElementById('sso_go');
-    if (a) a.href = url;                             // keep visible fallback accurate
-    parentWin.postMessage({{ type: 'sso-redirect', url }}, '*'); // ask TOP to navigate
-  }};
+    if (a) a.href = url;                         // visible fallback
+    parentWin.postMessage({ type: 'sso-redirect', url }, '*'); // ask TOP to navigate
+  };
 
-  try {{
-    const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
-      credentials: 'include', cache: 'no-store'
-    }});
+  try {
+    const res = await fetch(OAUTH2_PREFIX + '/userinfo?ts=' + Date.now(), {
+      credentials: 'include',
+      cache: 'no-store'
+    });
     if (!res.ok) return goLogin();
 
     const data = await res.json();
     if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
     if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
 
-    parentWin.postMessage({{ type: 'sso-replace', url: cur.toString() + hash }}, '*'); // no history spam
-  }} catch (err) {{
+    parentWin.postMessage({ type: 'sso-replace', url: cur.toString() + hash }, '*'); // history-safe replace
+  } catch (err) {
     goLogin();
-  }}
+  }
 })();
 </script>
-""", height=40)
+""")
+
+    st_html(
+        html_tpl.substitute(prefix=json.dumps(OAUTH2_PREFIX)),
+        height=40,
+    )
     st.stop()
 
 # Claims (read once after bootstrap)
