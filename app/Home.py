@@ -270,44 +270,44 @@ def need_sso_claims() -> bool:
 # SSO bootstrap
 if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     st.session_state["sso_boot_tries"] += 1
-    st_html(
-        f"""
-        <div style="padding:12px">Signing you in… If nothing happens,
-          <a id="sso_go" href="{OAUTH2_PREFIX}/start">click here</a>.
-        </div>
-        <script>
-        (async () => {{
-          const topWin = window.top || window;
-          const cur    = new URL(topWin.location.href);
-          const hash   = cur.hash; cur.hash = "";
+    st_html(f"""
+<div style="padding:12px">
+Signing you in… If nothing happens, <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
+</div>
+<script>
+(async () => {{
+const parentWin = window.parent || window.top;
+const cur  = new URL(parentWin.location.href);
+const hash = cur.hash; cur.hash = "";
 
-          function goLogin() {{
-            const rd = encodeURIComponent(cur.toString() + hash);
-            const url = '{OAUTH2_PREFIX}/start?rd=' + rd;
-            document.getElementById('sso_go').href = url;
-            topWin.location.href = url;
-          }}
+const goLogin = () => {{
+    const rd  = encodeURIComponent(cur.toString() + hash);
+    const url = '{OAUTH2_PREFIX}/start?rd=' + rd;
+    // make the visible fallback correct and top-targeted
+    const a = document.getElementById('sso_go'); if (a) a.href = url;
+    // ask the TOP page to navigate (sandbox-safe)
+    parentWin.postMessage({{ type: 'sso-redirect', url }}, '*');
+}};
 
-          try {{
-            const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
-              credentials: 'include',
-              cache: 'no-store'
-            }});
-            if (!res.ok) return goLogin();
+try {{
+    const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
+    credentials: 'include',
+    cache: 'no-store'
+    }});
+    if (!res.ok) return goLogin();
 
-            const data = await res.json();
-            if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
-            if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
+    const data = await res.json();
+    if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
+    if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
 
-            topWin.location.replace(cur.toString() + hash);
-          }} catch (e) {{
-            goLogin();
-          }}
-        }})();
-        </script>
-        """,
-        height=40,
-    )
+    // request a history-safe replace on the TOP page
+    parentWin.postMessage({{ type: 'sso-replace', url: cur.toString() + hash }}, '*');
+}} catch (e) {{
+    goLogin();
+}}
+}})();
+</script>
+""", height=40)
     st.stop()
 
 # Read claims once
@@ -371,13 +371,16 @@ st.markdown(
 # Visible fallback if somehow still not signed
 if REQUIRE_SSO and not u_email:
     st.info("You are not signed in. Use the university login.")
-    st.markdown(f'<a href="{OAUTH2_PREFIX}/start?rd=" id="fallback_sso">Sign in now</a>', unsafe_allow_html=True)
+    st.markdown(
+        f'<a href="{OAUTH2_PREFIX}/start?rd=" id="fallback_sso" target="_top">Sign in now</a>',
+        unsafe_allow_html=True
+    )
     st_html("""
-      <script>
-        const link = document.getElementById('fallback_sso');
-        const cur  = new URL((window.top||window).location.href);
-        link.href  = '/oauth2/start?rd=' + encodeURIComponent(cur.toString());
-      </script>
+    <script>
+    const link = document.getElementById('fallback_sso');
+    const cur  = new URL((window.top||window).location.href);
+    if (link) link.href = '/oauth2/start?rd=' + encodeURIComponent(cur.toString());
+    </script>
     """, height=1)
     st.stop()
 
