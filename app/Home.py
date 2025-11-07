@@ -242,79 +242,57 @@ def is_instructor(email: str) -> bool:
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-# 1) Bridge: let sandboxed parts ask the TOP page to navigate (avoids sandbox errors)
-st.markdown(
-    """
-    <script>
-      window.addEventListener('message', (e) => {
-        if (!e || !e.data || typeof e.data !== 'object') return;
-        if (e.data.type === 'sso-redirect' && e.data.url) {
-          window.location.href = e.data.url;             // full nav
-        }
-        if (e.data.type === 'sso-replace' && e.data.url) {
-          window.location.replace(e.data.url);           // history-safe replace
-        }
-      }, false);
-    </script>
-    """,
-    unsafe_allow_html=True,
-)
 
-# Retry guard (prevents loops)
 st.session_state.setdefault("sso_boot_tries", 0)
-
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
 
 def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-# SSO bootstrap (no f-string — avoids brace escaping issues)
-if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
-    st.session_state["sso_boot_tries"] += 1
-
-    html_tpl = Template(r"""
-<div style="padding:12px; font-size:15px;">
-  Signing you in… If nothing happens, <a id="sso_go" target="_top">click here</a>.
+if REQUIRE_SSO and need_sso_claims():
+    tpl = Template(r"""
+<div style="padding:14px; font-size:15px">
+  <b>Sign-in required.</b><br/>
+  We’ll use your university SSO to continue.
+  <div style="margin-top:10px; display:flex; gap:12px; align-items:center;">
+    <button id="sso_continue" style="padding:6px 12px; cursor:pointer;">Continue</button>
+    <a id="sso_link" target="_top">Sign in manually</a>
+  </div>
 </div>
 <script>
-(async () => {
-  const OAUTH2_PREFIX = $prefix;                 // injected safely as JSON string
-  const parentWin = window.parent || window.top;
-  const cur  = new URL(parentWin.location.href);
-  const hash = cur.hash; cur.hash = "";
+(function(){
+  const OAUTH2 = $prefix;                          // injected as JSON string
+  const topWin = window.top || window;
+  const cur    = new URL(topWin.location.href);
 
-  const goLogin = () => {
-    const rd  = encodeURIComponent(cur.toString() + hash);
-    const url = OAUTH2_PREFIX + '/start?rd=' + rd;
-    const a = document.getElementById('sso_go');
-    if (a) a.href = url;                         // visible fallback
-    parentWin.postMessage({ type: 'sso-redirect', url }, '*'); // ask TOP to navigate
-  };
+  // Prepare manual sign-in link
+  const manual = document.getElementById('sso_link');
+  manual.href  = OAUTH2 + '/start?rd=' + encodeURIComponent(cur.toString());
 
-  try {
-    const res = await fetch(OAUTH2_PREFIX + '/userinfo?ts=' + Date.now(), {
-      credentials: 'include',
-      cache: 'no-store'
-    });
-    if (!res.ok) return goLogin();
+  // User-initiated flow (allowed by sandbox)
+  document.getElementById('sso_continue').addEventListener('click', async function(){
+    try {
+      const res = await fetch(OAUTH2 + '/userinfo?ts=' + Date.now(), {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      if (!res.ok) { topWin.location.href = manual.href; return; }
 
-    const data = await res.json();
-    if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
-    if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
+      const data = await res.json();
+      if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
+      if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
 
-    parentWin.postMessage({ type: 'sso-replace', url: cur.toString() + hash }, '*'); // history-safe replace
-  } catch (err) {
-    goLogin();
-  }
+      topWin.location.replace(cur.toString());     // user click => navigation allowed
+    } catch (e) {
+      topWin.location.href = manual.href;          // fallback to OAuth2 /start
+    }
+  });
 })();
 </script>
 """)
 
-    st_html(
-        html_tpl.substitute(prefix=json.dumps(OAUTH2_PREFIX)),
-        height=40,
-    )
+    st_html(tpl.substitute(prefix=json.dumps(OAUTH2_PREFIX)), height=110)
     st.stop()
 
 # Claims (read once after bootstrap)
