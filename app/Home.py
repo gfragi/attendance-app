@@ -240,17 +240,17 @@ def is_instructor(email: str) -> bool:
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-# Bridge so sandboxed components can ask the top window to navigate
+# 1) Bridge: let sandboxed parts ask the TOP page to navigate (avoids sandbox errors)
 st.markdown(
     """
     <script>
       window.addEventListener('message', (e) => {
         if (!e || !e.data || typeof e.data !== 'object') return;
         if (e.data.type === 'sso-redirect' && e.data.url) {
-          window.location.href = e.data.url;
+          window.location.href = e.data.url;             // full nav
         }
         if (e.data.type === 'sso-replace' && e.data.url) {
-          window.location.replace(e.data.url);
+          window.location.replace(e.data.url);           // history-safe replace
         }
       }, false);
     </script>
@@ -258,7 +258,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Retry guard
+# Retry guard (prevents loops)
 st.session_state.setdefault("sso_boot_tries", 0)
 
 REQUIRE_SSO = os.getenv("REQUIRE_SSO", "false").strip().lower() == "true"
@@ -267,30 +267,30 @@ def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
-# SSO bootstrap
+# 2) Bootstrap: try /userinfo → set claims → replace URL; else go to /start (with visible fallback)
 if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     st.session_state["sso_boot_tries"] += 1
     st_html(f"""
-<div style="padding:12px">
+<div style="padding:12px; font-size:15px;">
   Signing you in… If nothing happens, <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
 </div>
 <script>
 (async () => {{
   const parentWin = window.parent || window.top;
   const cur  = new URL(parentWin.location.href);
-  const hash = cur.hash; cur.hash = "";
+  const hash = cur.hash; cur.hash = "";   // keep hash safe, add back later
 
   const goLogin = () => {{
     const rd  = encodeURIComponent(cur.toString() + hash);
     const url = '{OAUTH2_PREFIX}/start?rd=' + rd;
-    const a = document.getElementById('sso_go'); if (a) a.href = url;   // visible fallback
-    parentWin.postMessage({{ type: 'sso-redirect', url }}, '*');        // ask TOP to navigate
+    const a = document.getElementById('sso_go');
+    if (a) a.href = url;                             // keep visible fallback accurate
+    parentWin.postMessage({{ type: 'sso-redirect', url }}, '*'); // ask TOP to navigate
   }};
 
   try {{
     const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
-      credentials: 'include',
-      cache: 'no-store'
+      credentials: 'include', cache: 'no-store'
     }});
     if (!res.ok) return goLogin();
 
@@ -298,21 +298,21 @@ if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
     if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
 
-    parentWin.postMessage({{ type: 'sso-replace', url: cur.toString() + hash }}, '*'); // history-safe replace
-  }} catch (e) {{
+    parentWin.postMessage({{ type: 'sso-replace', url: cur.toString() + hash }}, '*'); // no history spam
+  }} catch (err) {{
     goLogin();
   }}
-}})();
+})();
 </script>
 """, height=40)
     st.stop()
 
-# Read claims once
+# Claims (read once after bootstrap)
 u = current_user()
 u_email = (u.get("email") or "").strip().lower()
 u_name  = (u.get("name")  or "").strip()
 
-# Logo (inline, safe)
+# --- Header (logo + right block) ---
 @st.cache_data
 def _b64_or_empty(path: str) -> str:
     try:
@@ -365,7 +365,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Visible fallback if somehow still not signed
+# Fallback UI if still unauthenticated (rare, but avoids user being stuck)
 if REQUIRE_SSO and not u_email:
     st.info("You are not signed in. Use the university login.")
     st.markdown(
@@ -373,11 +373,11 @@ if REQUIRE_SSO and not u_email:
         unsafe_allow_html=True
     )
     st_html("""
-    <script>
-    const link = document.getElementById('fallback_sso');
-    const cur  = new URL((window.top||window).location.href);
-    if (link) link.href = '/oauth2/start?rd=' + encodeURIComponent(cur.toString());
-    </script>
+      <script>
+        const link = document.getElementById('fallback_sso');
+        const cur  = new URL((window.top||window).location.href);
+        if (link) link.href = '/oauth2/start?rd=' + encodeURIComponent(cur.toString());
+      </script>
     """, height=1)
     st.stop()
 
