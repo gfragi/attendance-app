@@ -14,6 +14,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
 from string import Template
 
+from urllib.parse import urlencode, quote
+
+
 # =============================
 # Config
 # =============================
@@ -250,49 +253,17 @@ def need_sso_claims() -> bool:
     p = st.query_params
     return not (isinstance(p.get("sso_email"), str) and p.get("sso_email"))
 
+# --- SSO gate: plain link rendered in the top document (no iframes, no JS) ---
 if REQUIRE_SSO and need_sso_claims():
-    tpl = Template(r"""
-<div style="padding:14px; font-size:15px">
-  <b>Sign-in required.</b><br/>
-  We’ll use your university SSO to continue.
-  <div style="margin-top:10px; display:flex; gap:12px; align-items:center;">
-    <button id="sso_continue" style="padding:6px 12px; cursor:pointer;">Continue</button>
-    <a id="sso_link" target="_top">Sign in manually</a>
-  </div>
-</div>
-<script>
-(function(){
-  const OAUTH2 = $prefix;                          // injected as JSON string
-  const topWin = window.top || window;
-  const cur    = new URL(topWin.location.href);
+    # Reconstruct the current public URL using your known public base
+    # (Streamlit cannot read the absolute URL server-side)
+    qs = urlencode(st.query_params, doseq=True)
+    base = PUBLIC_BASE_URL.rstrip("/")
+    here = f"{base}/" + (f"?{qs}" if qs else "")
+    signin_url = f"{OAUTH2_PREFIX}/start?rd={quote(here, safe='')}"
 
-  // Prepare manual sign-in link
-  const manual = document.getElementById('sso_link');
-  manual.href  = OAUTH2 + '/start?rd=' + encodeURIComponent(cur.toString());
-
-  // User-initiated flow (allowed by sandbox)
-  document.getElementById('sso_continue').addEventListener('click', async function(){
-    try {
-      const res = await fetch(OAUTH2 + '/userinfo?ts=' + Date.now(), {
-        credentials: 'include',
-        cache: 'no-store'
-      });
-      if (!res.ok) { topWin.location.href = manual.href; return; }
-
-      const data = await res.json();
-      if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
-      if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
-
-      topWin.location.replace(cur.toString());     // user click => navigation allowed
-    } catch (e) {
-      topWin.location.href = manual.href;          // fallback to OAuth2 /start
-    }
-  });
-})();
-</script>
-""")
-
-    st_html(tpl.substitute(prefix=json.dumps(OAUTH2_PREFIX)), height=110)
+    st.info("Sign-in required to continue.")
+    st.link_button("Sign in with University", signin_url)  # renders in top document
     st.stop()
 
 # Claims (read once after bootstrap)
