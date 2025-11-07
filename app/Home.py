@@ -272,27 +272,25 @@ if REQUIRE_SSO and need_sso_claims() and st.session_state["sso_boot_tries"] < 2:
     st.session_state["sso_boot_tries"] += 1
     st_html(f"""
 <div style="padding:12px">
-Signing you in… If nothing happens, <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
+  Signing you in… If nothing happens, <a id="sso_go" target="_top" href="{OAUTH2_PREFIX}/start">click here</a>.
 </div>
 <script>
 (async () => {{
-const parentWin = window.parent || window.top;
-const cur  = new URL(parentWin.location.href);
-const hash = cur.hash; cur.hash = "";
+  const parentWin = window.parent || window.top;
+  const cur  = new URL(parentWin.location.href);
+  const hash = cur.hash; cur.hash = "";
 
-const goLogin = () => {{
+  const goLogin = () => {{
     const rd  = encodeURIComponent(cur.toString() + hash);
     const url = '{OAUTH2_PREFIX}/start?rd=' + rd;
-    // make the visible fallback correct and top-targeted
-    const a = document.getElementById('sso_go'); if (a) a.href = url;
-    // ask the TOP page to navigate (sandbox-safe)
-    parentWin.postMessage({{ type: 'sso-redirect', url }}, '*');
-}};
+    const a = document.getElementById('sso_go'); if (a) a.href = url;   // visible fallback
+    parentWin.postMessage({{ type: 'sso-redirect', url }}, '*');        // ask TOP to navigate
+  }};
 
-try {{
+  try {{
     const res = await fetch('{OAUTH2_PREFIX}/userinfo?ts=' + Date.now(), {{
-    credentials: 'include',
-    cache: 'no-store'
+      credentials: 'include',
+      cache: 'no-store'
     }});
     if (!res.ok) return goLogin();
 
@@ -300,11 +298,10 @@ try {{
     if (data && data.email) cur.searchParams.set('sso_email', String(data.email).toLowerCase());
     if (data && (data.name || data.user)) cur.searchParams.set('sso_name', String(data.name || data.user));
 
-    // request a history-safe replace on the TOP page
-    parentWin.postMessage({{ type: 'sso-replace', url: cur.toString() + hash }}, '*');
-}} catch (e) {{
+    parentWin.postMessage({{ type: 'sso-replace', url: cur.toString() + hash }}, '*'); // history-safe replace
+  }} catch (e) {{
     goLogin();
-}}
+  }}
 }})();
 </script>
 """, height=40)
