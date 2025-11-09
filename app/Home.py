@@ -267,31 +267,11 @@ st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
 def need_identity():
     u = current_user()
-    # in proxy mode we *require* identity from nginx; otherwise we let the UI collect it
-    return AUTH_MODE == "proxy" and not (u["email"])
+    return AUTH_MODE == "proxy" and not u["email"]
 
 if need_identity():
     st.info("You need to sign in with your university account.")
-    st.markdown(
-        f'<a id="sso_link" href="{OAUTH2_PREFIX}/start?rd=" target="_top">Continue to sign in</a>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        """
-        <script>
-          (function () {
-            try {
-              var a = document.getElementById('sso_link');
-              var loc = window.location;
-              // Build absolute current URL without fragment; oauth2-proxy usually doesn't need the hash.
-              var here = loc.origin + loc.pathname + loc.search;
-              a.href = '%s/start?rd=' + encodeURIComponent(here);
-            } catch (e) {}
-          })();
-        </script>
-        """ % OAUTH2_PREFIX,
-        unsafe_allow_html=True
-    )
+    st.markdown('<a href="/oauth2/start" target="_top">Continue to sign in</a>', unsafe_allow_html=True)
     st.stop()
 
 # After the gate, read the claims once for the rest of the app
