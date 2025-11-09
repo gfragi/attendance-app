@@ -312,7 +312,7 @@ def _b64_or_empty(path: str) -> str:
     except Exception:
         return ""
 
-# point this to your real logo file
+# point this to the real logo file
 LOGO_PATH = Path(__file__).parent / "assets" / "dit_hua_logo.png"
 LOGO_DATA_B64 = _b64_or_empty(str(LOGO_PATH))
 LOGO_DATA_URL = f"data:image/png;base64,{LOGO_DATA_B64}" if LOGO_DATA_B64 else ""

@@ -1,0 +1,19 @@
+version: "3.9"
+services:
+  app:
+    image: python:3.11-slim
+    working_dir: /app
+    command: bash -lc "pip install streamlit sqlalchemy pandas qrcode && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+    volumes: [ "./app:/app" ]   # put your Streamlit file as app/app.py
+    environment:
+      AUTH_MODE: proxy
+      PUBLIC_BASE_URL: http://nginx:8080
+    expose: [ "8501" ]
+
+  nginx:
+    image: nginx:1.25
+    depends_on: [ app ]
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./nginx-fake.conf:/etc/nginx/conf.d/default.conf:ro
