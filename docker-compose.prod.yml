@@ -1,22 +1,25 @@
 services:
   app:
-    # use image or build locally
     build: .
-    #image: ghcr.io/gfragi/attendance-app:latest
+    working_dir: /app
     env_file: [ ./.env.prod ]
+    environment:
+      AUTH_MODE: "proxy"
+      PUBLIC_BASE_URL: "https://attendances.ditapps.hua.gr"
+      DATABASE_URL: "sqlite:////data/attendance.db"
+      PYTHONUNBUFFERED: "1"
+      DEBUG_MODE: "true"
     restart: unless-stopped
-    volumes: [ ./data:/data ]
-    expose: [ "8501" ]
+    volumes: 
+      - ./data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8501/_stcore/health || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-      start_period: 20s
-    # optional hardening
-    # deploy:
-    #   resources:
-    #     limits: { memory: 512M, cpus: "0.50" }
+      test: ["CMD-SHELL", "curl -fs http://localhost:8501/_stcore/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    expose: 
+      - "8501"
 
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
@@ -30,16 +33,22 @@ services:
       - --redirect-url=https://attendances.ditapps.hua.gr/oauth2/callback
       - --cookie-secure=true
       - --cookie-samesite=lax
-      - --cookie-expire=8h
+      - --cookie-expire=4h
       - --cookie-refresh=1h
-      - --set-authorization-header=true
-      - --pass-authorization-header=true
+      - --set-xauthrequest=true
       - --pass-user-headers=true
+      - --pass-authorization-header=false
       - --skip-jwt-bearer-tokens=true
-      # optional but can help with some proxies:
-      # - --reverse-proxy=true
       - --cookie-domain=attendances.ditapps.hua.gr
-    ports: [ "10.100.59.105:8080:4180" ]
+      - --skip-provider-button=true
+      - --scope=openid profile email
+    ports: 
+      - "10.100.59.105:8080:4180"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4180/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
