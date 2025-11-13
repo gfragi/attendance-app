@@ -278,7 +278,7 @@ def get_headers():
     return {}
 
 def enhanced_current_user():
-    """Enhanced user detection for LDAP environments"""
+    """Enhanced user detection for LDAP environments with better name fallback"""
     if AUTH_MODE == "proxy":
         headers = get_headers()
         
@@ -301,14 +301,28 @@ def enhanced_current_user():
             headers.get("X-LDAP-User") or
             headers.get("X-REMOTE-NAME") or
             headers.get("Display-Name") or
+            headers.get("X-Full-Name") or  # Additional common header
             _qp_first("sso_name")
         )
         
-        # If we have email but no name, try to extract from email
-        if email and not name:
-            # Try to extract name from email (e.g., "john.doe@hua.gr" -> "John Doe")
+        # ENHANCED: If we have email but no proper name, extract from email
+        if email and (not name or name.isdigit() or '10877' in str(name)):
+            # Extract name from email (e.g., "john.doe@hua.gr" -> "John Doe")
             name_part = email.split('@')[0]
-            name = ' '.join([part.capitalize() for part in name_part.split('.')])
+            
+            # Handle different email formats:
+            if '.' in name_part:
+                # Format: name.surname -> "Name Surname"
+                name = ' '.join([part.capitalize() for part in name_part.split('.')])
+            elif '_' in name_part:
+                # Format: name_surname -> "Name Surname"  
+                name = ' '.join([part.capitalize() for part in name_part.split('_')])
+            elif '-' in name_part:
+                # Format: name-surname -> "Name Surname"
+                name = ' '.join([part.capitalize() for part in name_part.split('-')])
+            else:
+                # Single word: "name" -> "Name"
+                name = name_part.capitalize()
             
     else:
         email = _qp_first("email")
@@ -318,20 +332,6 @@ def enhanced_current_user():
     name = (name or "").strip() or None
     
     return {"email": email, "name": name}
-
-def current_user():
-    """Current user with session fallback"""
-    u = enhanced_current_user()
-    
-    # If we have user info from headers, store it in session
-    if u['email']:
-        st.session_state.authenticated_user = u['email']
-    
-    # If no user info in headers but we have session, use session
-    elif not u['email'] and st.session_state.authenticated_user:
-        u = {"email": st.session_state.authenticated_user, "name": u_name or "User"}
-    
-    return u
 
 def is_admin(email: str) -> bool:
     """Check if email is in admin list (case-insensitive)"""
