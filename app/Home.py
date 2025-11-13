@@ -676,24 +676,24 @@ if "Instructor Panel" in tab_index:
                                           date_to=pd.Timestamp(date_to).tz_localize("UTC"))
                 df = df_from_query(q)
                 st.subheader("Raw check-ins (sortable)")
-                st.dataframe(df.sort_values("check_in_at", ascending=False), use_container_width=True)
+                st.dataframe(df.sort_values("check_in_at", ascending=False), width='stretch')
                 st.download_button("Download CSV (raw)", df.to_csv(index=False).encode(),
                                    file_name="instructor_checkins.csv", mime="text/csv")
 
                 st.subheader(f"Aggregates per {bucket.split()[0]} & course")
                 grouped, pivot = group_df(df, freq=freq)
-                st.dataframe(grouped, use_container_width=True)
+                st.dataframe(grouped, width='stretch')
                 st.download_button("Download CSV (grouped)", grouped.to_csv(index=False).encode(),
                                    file_name="instructor_grouped.csv", mime="text/csv")
 
                 st.subheader("Pivot (rows=time bucket, columns=course_code)")
-                st.dataframe(pivot, use_container_width=True)
+                st.dataframe(pivot, width='stretch')
                 st.download_button("Download CSV (pivot)", pivot.to_csv().encode(),
                                    file_name="instructor_pivot.csv", mime="text/csv")
 
                 st.subheader("Per-student attendance rate (%) per course")
                 rates = course_attendance_rates(df)
-                st.dataframe(rates, use_container_width=True)
+                st.dataframe(rates, width='stretch')
                 st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
                                    file_name="instructor_rates.csv", mime="text/csv")
 
@@ -786,24 +786,24 @@ if "Reports" in tab_index:
             df = df_from_query(q)
 
             st.markdown("#### Raw")
-            st.dataframe(df.sort_values(["course_code","check_in_at"]), use_container_width=True)
+            st.dataframe(df.sort_values(["course_code","check_in_at"]), width='stretch')
             st.download_button("Download CSV (raw)", df.to_csv(index=False).encode(),
                                file_name="admin_checkins_raw.csv", mime="text/csv")
 
             st.markdown("#### Aggregated per time bucket & course")
             grouped, pivot = group_df(df, freq=freq)
-            st.dataframe(grouped, use_container_width=True)
+            st.dataframe(grouped, width='stretch')
             st.download_button("Download CSV (grouped)", grouped.to_csv(index=False).encode(),
                                file_name="admin_grouped.csv", mime="text/csv")
 
             st.markdown("#### Pivot")
-            st.dataframe(pivot, use_container_width=True)
+            st.dataframe(pivot, width='stretch')
             st.download_button("Download CSV (pivot)", pivot.to_csv().encode(),
                                file_name="admin_pivot.csv", mime="text/csv")
 
             st.markdown("#### Per-student attendance rate by course")
             rates = course_attendance_rates(df)
-            st.dataframe(rates, use_container_width=True)
+            st.dataframe(rates, width='stretch')
             st.download_button("Download CSV (rates)", rates.to_csv(index=False).encode(),
                                file_name="admin_rates.csv", mime="text/csv")
 
