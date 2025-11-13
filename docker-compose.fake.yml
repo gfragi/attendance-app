@@ -3,8 +3,11 @@ services:
     image: python:3.11-slim
     working_dir: /app
     command: >
-      bash -lc "pip install --no-cache-dir -r requirements.txt &&
-                streamlit run Home.py --server.port 8501 --server.address 0.0.0.0"
+      bash -lc "
+        pip install --no-cache-dir -r requirements.txt &&
+        echo 'Starting Streamlit app...' &&
+        streamlit run Home.py --server.port 8501 --server.address 0.0.0.0 --server.headless true --server.runOnSave true
+      "
     volumes:
       - ./app:/app
       - ./data:/data
@@ -13,39 +16,78 @@ services:
       PUBLIC_BASE_URL: "https://localhost:8443"
       DATABASE_URL: "sqlite:////data/attendance.db"
       PYTHONUNBUFFERED: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     expose:
       - "8501"
+    restart: unless-stopped
 
-  # oauth2-proxy sitting in front of Google
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
-    env_file:
-      - ./.env
     environment:
-      OAUTH2_PROXY_PROVIDER: ${OAUTH2_PROXY_PROVIDER}
-      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
-      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
-      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      # OAuth Configuration
+      OAUTH2_PROXY_PROVIDER: "google"
+      OAUTH2_PROXY_CLIENT_ID: "${OAUTH2_PROXY_CLIENT_ID}"
+      OAUTH2_PROXY_CLIENT_SECRET: "${OAUTH2_PROXY_CLIENT_SECRET}"
+      OAUTH2_PROXY_COOKIE_SECRET: "${OAUTH2_PROXY_COOKIE_SECRET}"
+      
+      # Domain restriction
       OAUTH2_PROXY_EMAIL_DOMAINS: "hua.gr"
-      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"         # <-- emit X-Auth-Request-* headers
-      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      
+      # URLs
+      OAUTH2_PROXY_REDIRECT_URL: "https://localhost:8443/oauth2/callback"
       OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
-      OAUTH2_PROXY_REDIRECT_URL: "https://localhost:8443/oauth2/callback"  # local https
-      OAUTH2_PROXY_COOKIE_SECURE: "true"           # local https
+      
+      # Headers - CRITICAL FIXES
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"
+      OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER: "false"
+      
+      # Cookie settings - IMPORTANT FIXES
+      OAUTH2_PROXY_COOKIE_NAME: "_oauth2_proxy"
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_HTTPONLY: "true"
+      OAUTH2_PROXY_COOKIE_REFRESH: "1h"
+      OAUTH2_PROXY_COOKIE_EXPIRE: "4h"
       OAUTH2_PROXY_COOKIE_SAMESITE: "lax"
+      OAUTH2_PROXY_COOKIE_DOMAIN: "localhost"
+      
+      # UI
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      
+      # Whitelist
       OAUTH2_PROXY_WHITELIST_DOMAINS: "localhost:8443"
-
+      
+      # Scope
+      OAUTH2_PROXY_SCOPE: "openid profile email"
+      
+      # Additional reliability settings
+      OAUTH2_PROXY_UPSTREAMS: "http://app:8501/"
+      OAUTH2_PROXY_SKIP_AUTH_PREFLIGHT: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4180/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     expose:
       - "4180"
+    restart: unless-stopped
 
   nginx:
     image: nginx:alpine
     ports:
       - "8082:80"
-      - "8443:8443"                # local https port
+      - "8443:8443"
     volumes:
       - ./nginx/app.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/start-nginx.sh:/start-nginx.sh:ro
+    command: ["/bin/sh", "/start-nginx.sh"]
     depends_on:
       - app
       - oauth2-proxy
+    restart: unless-stopped

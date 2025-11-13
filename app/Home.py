@@ -12,6 +12,11 @@ import qrcode
 
 import base64
 
+# Initialize session state for authentication
+if 'authenticated_user' not in st.session_state:
+    st.session_state.authenticated_user = None
+
+
 
 # =============================
 # Config
@@ -37,7 +42,7 @@ INSTRUCTOR_EMAILS = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "
 AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()  # "manual" or "proxy"
 
 # =============================
-# Models
+# Models (keep your existing models)
 # =============================
 
 class User(Base):
@@ -90,7 +95,7 @@ class Attendance(Base):
 Base.metadata.create_all(engine)
 
 # =============================
-# Helpers
+# Helpers 
 # =============================
 def get_db():
     return SessionLocal()
@@ -223,11 +228,11 @@ def course_attendance_rates(df: pd.DataFrame):
     return out.sort_values(["course_code","attendance_rate_%"], ascending=[True, False])
 
 # =============================
-# Auth / Roles
+# Auth / Roles - COMPLETE FIXED VERSION
 # =============================
 
 def _qp_first(key: str) -> str | None:
-    """Get first value from st.query_params for key, regardless of Streamlit version."""
+    """Get first value from st.query_params for key."""
     q = st.query_params
     if key not in q:
         return None
@@ -236,22 +241,86 @@ def _qp_first(key: str) -> str | None:
         return (v[0] or "").strip()
     if isinstance(v, str):
         return v.strip()
-    # Some versions expose a dict-like where indexing returns str
     try:
         return str(v).strip() if v is not None else None
     except Exception:
         return None
 
-def current_user():
+def get_headers():
+    """Get request headers using the new Streamlit method."""
+    try:
+        # NEW METHOD: Use st.context.headers
+        if hasattr(st, 'context') and hasattr(st.context, 'headers'):
+            return st.context.headers
+    except Exception:
+        pass
+    
+    # Fallback for older versions
+    try:
+        from streamlit.web.server.websocket_headers import _get_websocket_headers
+        headers = _get_websocket_headers()
+        if headers:
+            return headers
+    except ImportError:
+        pass
+    
+    return {}
+
+def enhanced_current_user():
+    """Enhanced user detection for LDAP environments"""
     if AUTH_MODE == "proxy":
-        email = _qp_first("sso_email")
-        name  = _qp_first("sso_name")
+        headers = get_headers()
+        
+        # Try ALL possible header names that might contain user info
+        email = (
+            headers.get("X-Auth-Request-Email") or
+            headers.get("X-Email") or
+            headers.get("X-Forwarded-Email") or
+            headers.get("X-User-Email") or
+            headers.get("X-LDAP-Email") or
+            headers.get("X-REMOTE-USER") or  # Common in LDAP setups
+            headers.get("REMOTE_USER") or    # Common in LDAP setups
+            _qp_first("sso_email")
+        )
+        
+        name = (
+            headers.get("X-Auth-Request-User") or
+            headers.get("X-User") or
+            headers.get("X-Forwarded-User") or
+            headers.get("X-LDAP-User") or
+            headers.get("X-REMOTE-NAME") or
+            headers.get("Display-Name") or
+            _qp_first("sso_name")
+        )
+        
+        # If we have email but no name, try to extract from email
+        if email and not name:
+            # Try to extract name from email (e.g., "john.doe@hua.gr" -> "John Doe")
+            name_part = email.split('@')[0]
+            name = ' '.join([part.capitalize() for part in name_part.split('.')])
+            
     else:
         email = _qp_first("email")
-        name  = _qp_first("name")
-    email = (email or "").lower() or None
-    name  = (name  or "") or None
+        name = _qp_first("name")
+    
+    email = (email or "").lower().strip() or None
+    name = (name or "").strip() or None
+    
     return {"email": email, "name": name}
+
+def current_user():
+    """Current user with session fallback"""
+    u = enhanced_current_user()
+    
+    # If we have user info from headers, store it in session
+    if u['email']:
+        st.session_state.authenticated_user = u['email']
+    
+    # If no user info in headers but we have session, use session
+    elif not u['email'] and st.session_state.authenticated_user:
+        u = {"email": st.session_state.authenticated_user, "name": u_name or "User"}
+    
+    return u
 
 def is_admin(email: str) -> bool:
     return bool(email) and email in ADMIN_EMAILS
@@ -260,30 +329,61 @@ def is_instructor(email: str) -> bool:
     return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
 
 # =============================
-# Page chrome (logo + logout) and SSO bootstrap
+# Enhanced Debugging
+# =============================
+
+def debug_auth_comprehensive():
+    """Comprehensive auth debugging"""
+    st.sidebar.markdown("### 🔍 Auth Debug Info")
+    
+    # Get all headers
+    headers = get_headers()
+    st.sidebar.markdown("#### Headers Received:")
+    for key, value in headers.items():
+        if any(auth_key in key.lower() for auth_key in ['auth', 'user', 'email', 'x-']):
+            st.sidebar.write(f"**{key}**: {value}")
+    
+    # Current user info
+    u = current_user()
+    st.sidebar.markdown("#### Current User:")
+    st.sidebar.write(f"Email: `{u['email']}`")
+    st.sidebar.write(f"Name: `{u['name']}`")
+    
+    # Query params
+    st.sidebar.markdown("#### Query Parameters:")
+    st.sidebar.write(dict(st.query_params))
+    
+    # Check if user is authenticated
+    is_auth = bool(u['email'])
+    st.sidebar.markdown("#### Authentication Status:")
+    st.sidebar.write(f"Authenticated: **{'✅ YES' if is_auth else '❌ NO'}**")
+    
+    return is_auth
+
+# =============================
+# Page Setup
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-
-def need_identity():
-    u = current_user()
-    return AUTH_MODE == "proxy" and not u["email"]
-
-if need_identity():
-    st.info("You need to sign in with your university account.")
-    st.markdown('<a href="/oauth2/start" target="_top">Continue to sign in</a>', unsafe_allow_html=True)
-    st.stop()
-
-# After the gate, read the claims once for the rest of the app
+# Get current user info
 u = current_user()
 u_email = (u.get("email") or "").strip().lower()
-u_name  = (u.get("name")  or "").strip()
+u_name = (u.get("name") or "").strip()
 
+def need_identity():
+    return AUTH_MODE == "proxy" and not u_email
 
+# Authentication gate
+if need_identity():
+    st.info("You need to sign in with your university account.")
+    st.markdown(f'<a href="{OAUTH2_PREFIX}/start?rd=https://localhost:8443" target="_top">Continue to sign in</a>', unsafe_allow_html=True)
+    st.stop()
 
-# --- Header (logo + title + optional signout) ---
+# Call debug after authentication gate
+debug_auth_comprehensive()
+# =============================
 
-# small helper to read logo file as data URL
+# Logo and header (keep your existing code)
 @st.cache_data
 def _b64_or_empty(path: str) -> str:
     try:
@@ -292,13 +392,11 @@ def _b64_or_empty(path: str) -> str:
     except Exception:
         return ""
 
-# point this to the real logo file
 LOGO_PATH = Path(__file__).parent / "assets" / "dit_hua_logo.png"
 LOGO_DATA_B64 = _b64_or_empty(str(LOGO_PATH))
 LOGO_DATA_URL = f"data:image/png;base64,{LOGO_DATA_B64}" if LOGO_DATA_B64 else ""
 
 right_block = ""
-# show a signed-in indicator + logout when in proxy mode and we have identity
 if AUTH_MODE == "proxy" and u_email:
     right_block = (
         f"""<div class="hua-right">
@@ -346,6 +444,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Manual auth (keep your existing code)
 if AUTH_MODE == "manual":
     with st.expander("Manual sign-in (admins/instructors)"):
         man_name  = st.text_input("Your name", value=u_name or "")
@@ -353,14 +452,15 @@ if AUTH_MODE == "manual":
                                   placeholder=f"name.surname{EMAIL_DOMAIN}")
         use_it = st.button("Use this identity")
         if use_it:
-            # write to URL so the rest of the app can pick it up
             st.query_params["name"] = man_name.strip()
             st.query_params["email"] = man_email.strip().lower()
             st.rerun()
 
+
 # =============================
 # Tabs
 # =============================
+
 labels = ["Student Check-in"]
 if is_instructor(u_email):
     labels.append("Instructor Panel")
@@ -700,11 +800,10 @@ with tabs[tab_index["Help"]]:
 - **Students must use `{EMAIL_DOMAIN}`**.  
 - If a QR link expires, click **Extend 10'**.  
 - All times are **Europe/Athens**.  
-- If the page keeps “loading”, the proxy must allow **WebSocket** upgrade headers.  
-- If you see “Not authenticated”, confirm `REQUIRE_SSO=true` and OAuth2 Proxy is in front.
+- If the page keeps "loading", the proxy must allow **WebSocket** upgrade headers.  
+- If you see "Not authenticated", confirm `REQUIRE_SSO=true` and OAuth2 Proxy is in front.
 """)
 
 
 st.markdown("----")
 st.markdown("© Harokopio University of Athens - Dept. of Informatics & Telematics | Developed by DIT | 2025")
-
