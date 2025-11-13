@@ -11,6 +11,7 @@ services:
     volumes:
       - ./app:/app
       - ./data:/data
+    env_file: [ ./.env]
     environment:
       AUTH_MODE: "proxy"
       PUBLIC_BASE_URL: "https://localhost:8443"
