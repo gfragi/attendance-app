@@ -9,17 +9,16 @@ import streamlit as st
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import qrcode
-
 import base64
 
-# Initialize session state for authentication
+# =============================
+# Initialize session state
+# =============================
 if 'authenticated_user' not in st.session_state:
     st.session_state.authenticated_user = None
 
-
-
 # =============================
-# Config - FIXED ROLE READING
+# Config
 # =============================
 APP_TITLE = "Centralized Attendance for University Courses"
 
@@ -35,13 +34,12 @@ SessionLocal = sessionmaker(bind=engine, future=True)
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 
-# Role allowlists - FIXED: Proper environment variable reading
+# Role allowlists
 def parse_email_list(env_var_name, default=""):
     """Safely parse comma-separated email lists from environment variables"""
     raw_value = os.getenv(env_var_name, default)
     if not raw_value:
         return set()
-    # Split by comma, strip whitespace, convert to lowercase, filter empty strings
     emails = {email.strip().lower() for email in raw_value.split(",") if email.strip()}
     return emails
 
@@ -49,13 +47,11 @@ ADMIN_EMAILS = parse_email_list("ADMIN_EMAILS", "gfragi@hua.gr")
 INSTRUCTOR_EMAILS = parse_email_list("INSTRUCTOR_EMAILS", "gfragi@hua.gr")
 
 AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()
-
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "yes", "on")
 
 # =============================
 # Models (keep your existing models)
 # =============================
-
 class User(Base):
     __tablename__ = "users"
     id          = Column(Integer, primary_key=True)
@@ -106,7 +102,7 @@ class Attendance(Base):
 Base.metadata.create_all(engine)
 
 # =============================
-# Helpers 
+# Helper Functions
 # =============================
 def get_db():
     return SessionLocal()
@@ -239,9 +235,8 @@ def course_attendance_rates(df: pd.DataFrame):
     return out.sort_values(["course_code","attendance_rate_%"], ascending=[True, False])
 
 # =============================
-# Auth / Roles - COMPLETE FIXED VERSION
+# Auth / Roles - MUST BE DEFINED BEFORE USE
 # =============================
-
 def _qp_first(key: str) -> str | None:
     """Get first value from st.query_params for key."""
     q = st.query_params
@@ -277,6 +272,31 @@ def get_headers():
     
     return {}
 
+def email_to_display_name(email: str) -> str:
+    """Convert email to a human-readable display name"""
+    if not email:
+        return "User"
+    
+    # Extract local part before @
+    local_part = email.split('@')[0]
+    
+    # Common academic email patterns
+    patterns = [
+        ('.', ' '),    # john.doe -> John Doe
+        ('_', ' '),    # john_doe -> John Doe  
+        ('-', ' '),    # john-doe -> John Doe
+    ]
+    
+    # Try each pattern
+    for separator, replacement in patterns:
+        if separator in local_part:
+            parts = local_part.split(separator)
+            # Capitalize each part and join with space
+            return ' '.join(part.capitalize() for part in parts if part)
+    
+    # If no separators found, just capitalize the whole thing
+    return local_part.capitalize()
+
 def enhanced_current_user():
     """Enhanced user detection for LDAP environments with better name fallback"""
     if AUTH_MODE == "proxy":
@@ -307,22 +327,7 @@ def enhanced_current_user():
         
         # ENHANCED: If we have email but no proper name, extract from email
         if email and (not name or name.isdigit() or '10877' in str(name)):
-            # Extract name from email (e.g., "john.doe@hua.gr" -> "John Doe")
-            name_part = email.split('@')[0]
-            
-            # Handle different email formats:
-            if '.' in name_part:
-                # Format: name.surname -> "Name Surname"
-                name = ' '.join([part.capitalize() for part in name_part.split('.')])
-            elif '_' in name_part:
-                # Format: name_surname -> "Name Surname"  
-                name = ' '.join([part.capitalize() for part in name_part.split('_')])
-            elif '-' in name_part:
-                # Format: name-surname -> "Name Surname"
-                name = ' '.join([part.capitalize() for part in name_part.split('-')])
-            else:
-                # Single word: "name" -> "Name"
-                name = name_part.capitalize()
+            name = email_to_display_name(email)
             
     else:
         email = _qp_first("email")
@@ -332,6 +337,20 @@ def enhanced_current_user():
     name = (name or "").strip() or None
     
     return {"email": email, "name": name}
+
+def current_user():
+    """Current user with session fallback"""
+    u = enhanced_current_user()
+    
+    # If we have user info from headers, store it in session
+    if u['email']:
+        st.session_state.authenticated_user = u['email']
+    
+    # If no user info in headers but we have session, use session
+    elif not u['email'] and st.session_state.authenticated_user:
+        u = {"email": st.session_state.authenticated_user, "name": u.get('name') or "User"}
+    
+    return u
 
 def is_admin(email: str) -> bool:
     """Check if email is in admin list (case-insensitive)"""
@@ -344,10 +363,6 @@ def is_instructor(email: str) -> bool:
     if not email:
         return False
     return email.lower() in INSTRUCTOR_EMAILS or is_admin(email)
-
-# =============================
-# Enhanced Debugging
-# =============================
 
 def debug_auth_comprehensive():
     """Comprehensive auth debugging - only shown when DEBUG_MODE=True"""
@@ -381,11 +396,11 @@ def debug_auth_comprehensive():
     return is_auth
 
 # =============================
-# Page Setup
+# Page Setup - NOW SAFE TO CALL current_user()
 # =============================
 st.set_page_config(page_title=APP_TITLE, page_icon="✅", layout="wide")
 
-# Get current user info
+# Get current user info - NOW THIS WILL WORK
 u = current_user()
 u_email = (u.get("email") or "").strip().lower()
 u_name = (u.get("name") or "").strip()
