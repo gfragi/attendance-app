@@ -234,6 +234,47 @@ def course_attendance_rates(df: pd.DataFrame):
     out["attendance_rate_%"] = (out["attended_sessions"] / out["total_sessions"] * 100).round(1)
     return out.sort_values(["course_code","attendance_rate_%"], ascending=[True, False])
 
+def import_courses_and_instructors_from_df(df: pd.DataFrame) -> str:
+    """Import courses and instructors from DataFrame with columns: course_code, course_title, instructor_name, instructor_email"""
+    db = get_db()
+    added_courses = 0
+    added_instructors = 0
+    added_assignments = 0
+    
+    for _, row in df.iterrows():
+        course_code = row.get('course_code', '').strip()
+        course_title = row.get('course_title', '').strip()
+        instructor_name = row.get('instructor_name', '').strip()
+        instructor_email = row.get('instructor_email', '').strip().lower()
+        
+        if not (course_code and course_title and instructor_name and instructor_email):
+            continue
+        
+        # Add or get course
+        course = db.query(Course).filter_by(code=course_code).first()
+        if not course:
+            course = Course(code=course_code, title=course_title)
+            db.add(course)
+            db.commit()
+            added_courses += 1
+        
+        # Add or get instructor user
+        user = db.query(User).filter_by(email=instructor_email).first()
+        if not user:
+            user = User(name=instructor_name, email=instructor_email, role="instructor")
+            db.add(user)
+            db.commit()
+            added_instructors += 1
+        
+        # Assign instructor to course
+        assignment = db.query(CourseInstructor).filter_by(course_id=course.id, user_id=user.id).first()
+        if not assignment:
+            db.add(CourseInstructor(course_id=course.id, user_id=user.id))
+            db.commit()
+            added_assignments += 1
+    
+    return f"✅ Import complete: {added_courses} courses, {added_instructors} instructors, {added_assignments} assignments added."
+
 # =============================
 # Auth / Roles - MUST BE DEFINED BEFORE USE
 # =============================
@@ -766,6 +807,39 @@ if "Admin Panel" in tab_index:
                     st.success("Assigned.")
         else:
             st.info("Add at least one instructor and one course.")
+
+st.markdown("#### Bulk Import Courses & Instructors")
+
+uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.dataframe(df)
+    
+    if st.button("Import Data"):
+        result = import_courses_and_instructors_from_df(df)
+        st.success(result)
+
+# Or paste data directly
+st.markdown("#### Or paste data directly")
+pasted_data = st.text_area("Paste tab-separated data (Course Code, Course Title, Instructor Name, Instructor Email)", height=200)
+if pasted_data and st.button("Import from text"):
+    # Parse pasted data
+    lines = pasted_data.strip().split('\n')
+    data = []
+    for line in lines:
+        parts = line.split('\t')
+        if len(parts) >= 4:
+            data.append({
+                'course_code': parts[0],
+                'course_title': parts[1], 
+                'instructor_name': parts[2],
+                'instructor_email': parts[3]
+            })
+    
+    df = pd.DataFrame(data)
+    result = import_courses_and_instructors_from_df(df)
+    st.success(result)
+
 
 # --- Admin Reports (Admin) ---
 if "Reports" in tab_index:
