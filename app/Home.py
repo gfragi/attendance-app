@@ -19,7 +19,7 @@ if 'authenticated_user' not in st.session_state:
 
 
 # =============================
-# Config
+# Config - FIXED ROLE READING
 # =============================
 APP_TITLE = "Centralized Attendance for University Courses"
 
@@ -35,11 +35,22 @@ SessionLocal = sessionmaker(bind=engine, future=True)
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8080")
 
-# Role allowlists (comma-separated emails)
-ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
-INSTRUCTOR_EMAILS = {e.strip().lower() for e in os.getenv("INSTRUCTOR_EMAILS", "").split(",") if e.strip()}
+# Role allowlists - FIXED: Proper environment variable reading
+def parse_email_list(env_var_name, default=""):
+    """Safely parse comma-separated email lists from environment variables"""
+    raw_value = os.getenv(env_var_name, default)
+    if not raw_value:
+        return set()
+    # Split by comma, strip whitespace, convert to lowercase, filter empty strings
+    emails = {email.strip().lower() for email in raw_value.split(",") if email.strip()}
+    return emails
 
-AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()  # "manual" or "proxy"
+ADMIN_EMAILS = parse_email_list("ADMIN_EMAILS", "gfragi@hua.gr")
+INSTRUCTOR_EMAILS = parse_email_list("INSTRUCTOR_EMAILS", "gfragi@hua.gr")
+
+AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()
+
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "yes", "on")
 
 # =============================
 # Models (keep your existing models)
@@ -323,17 +334,26 @@ def current_user():
     return u
 
 def is_admin(email: str) -> bool:
-    return bool(email) and email in ADMIN_EMAILS
+    """Check if email is in admin list (case-insensitive)"""
+    if not email:
+        return False
+    return email.lower() in ADMIN_EMAILS
 
 def is_instructor(email: str) -> bool:
-    return bool(email) and (email in INSTRUCTOR_EMAILS or is_admin(email))
+    """Check if email is in instructor list or is admin (case-insensitive)"""
+    if not email:
+        return False
+    return email.lower() in INSTRUCTOR_EMAILS or is_admin(email)
 
 # =============================
 # Enhanced Debugging
 # =============================
 
 def debug_auth_comprehensive():
-    """Comprehensive auth debugging"""
+    """Comprehensive auth debugging - only shown when DEBUG_MODE=True"""
+    if not DEBUG_MODE:
+        return True  # Return True to continue with auth check
+    
     st.sidebar.markdown("### 🔍 Auth Debug Info")
     
     # Get all headers
@@ -379,8 +399,27 @@ if need_identity():
     st.markdown(f'<a href="{OAUTH2_PREFIX}/start?rd=https://localhost:8443" target="_top">Continue to sign in</a>', unsafe_allow_html=True)
     st.stop()
 
-# Call debug after authentication gate
+# Call debug (will only show if debug mode is enabled)
 debug_auth_comprehensive()
+
+# =============================
+# Role Debug Info - NOW u_email IS DEFINED
+# =============================
+if DEBUG_MODE:
+    st.sidebar.markdown("### 👥 Role Debug Info")
+    st.sidebar.write(f"Admin emails: {list(ADMIN_EMAILS)}")
+    st.sidebar.write(f"Instructor emails: {list(INSTRUCTOR_EMAILS)}")
+    st.sidebar.write(f"Your email: `{u_email}`")
+    st.sidebar.write(f"Is admin: **{'✅ YES' if is_admin(u_email) else '❌ NO'}**")
+    st.sidebar.write(f"Is instructor: **{'✅ YES' if is_instructor(u_email) else '❌ NO'}**")
+
+    # Debug current role access
+    st.sidebar.markdown("### 🔧 Current Access")
+    st.sidebar.write(f"Can see Instructor Panel: {is_instructor(u_email)}")
+    st.sidebar.write(f"Can see Admin Panel: {is_admin(u_email)}")
+    st.sidebar.write(f"Can see Reports: {is_admin(u_email)}")
+
+
 # =============================
 
 # Logo and header (keep your existing code)
