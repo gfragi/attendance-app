@@ -808,37 +808,37 @@ if "Admin Panel" in tab_index:
         else:
             st.info("Add at least one instructor and one course.")
 
-st.markdown("#### Bulk Import Courses & Instructors")
+    st.markdown("#### Bulk Import Courses & Instructors")
 
-uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.dataframe(df)
-    
-    if st.button("Import Data"):
+    uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        st.dataframe(df)
+        
+        if st.button("Import Data"):
+            result = import_courses_and_instructors_from_df(df)
+            st.success(result)
+
+    # Or paste data directly
+    st.markdown("#### Or paste data directly")
+    pasted_data = st.text_area("Paste tab-separated data (Course Code, Course Title, Instructor Name, Instructor Email)", height=200)
+    if pasted_data and st.button("Import from text"):
+        # Parse pasted data
+        lines = pasted_data.strip().split('\n')
+        data = []
+        for line in lines:
+            parts = line.split('\t')
+            if len(parts) >= 4:
+                data.append({
+                    'course_code': parts[0],
+                    'course_title': parts[1], 
+                    'instructor_name': parts[2],
+                    'instructor_email': parts[3]
+                })
+        
+        df = pd.DataFrame(data)
         result = import_courses_and_instructors_from_df(df)
         st.success(result)
-
-# Or paste data directly
-st.markdown("#### Or paste data directly")
-pasted_data = st.text_area("Paste tab-separated data (Course Code, Course Title, Instructor Name, Instructor Email)", height=200)
-if pasted_data and st.button("Import from text"):
-    # Parse pasted data
-    lines = pasted_data.strip().split('\n')
-    data = []
-    for line in lines:
-        parts = line.split('\t')
-        if len(parts) >= 4:
-            data.append({
-                'course_code': parts[0],
-                'course_title': parts[1], 
-                'instructor_name': parts[2],
-                'instructor_email': parts[3]
-            })
-    
-    df = pd.DataFrame(data)
-    result = import_courses_and_instructors_from_df(df)
-    st.success(result)
 
 
 # --- Admin Reports (Admin) ---
