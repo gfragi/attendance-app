@@ -27,7 +27,10 @@ SESSION_DEFAULT_MINUTES = int(os.getenv("SESSION_DEFAULT_MINUTES", "15"))
 OAUTH2_PREFIX = os.getenv("OAUTH2_PREFIX", "/oauth2").rstrip("/")
 LOGOUT_URL = f"{OAUTH2_PREFIX}/sign_out"
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/attendance.db")
+
+DB_PATH = (Path(__file__).parent / "data" / "attendance.db").resolve()
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH.as_posix()}")
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine, future=True)
@@ -240,40 +243,86 @@ def import_courses_and_instructors_from_df(df: pd.DataFrame) -> str:
     added_courses = 0
     added_instructors = 0
     added_assignments = 0
+    errors = []
     
-    for _, row in df.iterrows():
-        course_code = row.get('course_code', '').strip()
-        course_title = row.get('course_title', '').strip()
-        instructor_name = row.get('instructor_name', '').strip()
-        instructor_email = row.get('instructor_email', '').strip().lower()
-        
-        if not (course_code and course_title and instructor_name and instructor_email):
-            continue
-        
-        # Add or get course
-        course = db.query(Course).filter_by(code=course_code).first()
-        if not course:
-            course = Course(code=course_code, title=course_title)
-            db.add(course)
-            db.commit()
-            added_courses += 1
-        
-        # Add or get instructor user
-        user = db.query(User).filter_by(email=instructor_email).first()
-        if not user:
-            user = User(name=instructor_name, email=instructor_email, role="instructor")
-            db.add(user)
-            db.commit()
-            added_instructors += 1
-        
-        # Assign instructor to course
-        assignment = db.query(CourseInstructor).filter_by(course_id=course.id, user_id=user.id).first()
-        if not assignment:
-            db.add(CourseInstructor(course_id=course.id, user_id=user.id))
-            db.commit()
-            added_assignments += 1
+    st.write("🔍 **DEBUG: Starting import process**")
     
-    return f"✅ Import complete: {added_courses} courses, {added_instructors} instructors, {added_assignments} assignments added."
+    for idx, row in df.iterrows():
+        try:
+            course_code = str(row.get('course_code', '')).strip()
+            course_title = str(row.get('course_title', '')).strip()
+            instructor_name = str(row.get('instructor_name', '')).strip()
+            instructor_email = str(row.get('instructor_email', '')).strip().lower()
+            
+            st.write(f"🔍 Processing row {idx+1}: '{course_code}', '{course_title}', '{instructor_name}', '{instructor_email}'")
+            
+            # Skip header row or empty rows
+            if course_code.lower() == 'course_code' and course_title.lower() == 'course_title':
+                st.write(f"⏭️ Skipping header row {idx+1}")
+                continue
+                
+            # Validate required fields
+            if not all([course_code, course_title, instructor_name, instructor_email]):
+                error_msg = f"Row {idx+1}: Missing required fields"
+                errors.append(error_msg)
+                st.write(f"❌ {error_msg}")
+                continue
+            
+            if not instructor_email.endswith('@hua.gr'):
+                error_msg = f"Row {idx+1}: Instructor email must be @hua.gr - {instructor_email}"
+                errors.append(error_msg)
+                st.write(f"❌ {error_msg}")
+                continue
+            
+            # Add or get course
+            course = db.query(Course).filter_by(code=course_code).first()
+            if not course:
+                course = Course(code=course_code, title=course_title)
+                db.add(course)
+                db.commit()
+                added_courses += 1
+                st.write(f"✅ Added new course: {course_code}")
+            else:
+                st.write(f"ℹ️ Course already exists: {course_code}")
+            
+            # Add or get instructor user
+            user = db.query(User).filter_by(email=instructor_email).first()
+            if not user:
+                user = User(name=instructor_name, email=instructor_email, role="instructor")
+                db.add(user)
+                db.commit()
+                added_instructors += 1
+                st.write(f"✅ Added new instructor: {instructor_name} ({instructor_email})")
+            else:
+                st.write(f"ℹ️ Instructor already exists: {instructor_email}")
+            
+            # Assign instructor to course
+            assignment = db.query(CourseInstructor).filter_by(course_id=course.id, user_id=user.id).first()
+            if not assignment:
+                db.add(CourseInstructor(course_id=course.id, user_id=user.id))
+                db.commit()
+                added_assignments += 1
+                st.write(f"✅ Assigned {instructor_name} to {course_code}")
+            else:
+                st.write(f"ℹ️ Assignment already exists: {instructor_name} -> {course_code}")
+                
+        except Exception as e:
+            error_msg = f"Row {idx+1}: Error - {str(e)}"
+            errors.append(error_msg)
+            st.write(f"💥 {error_msg}")
+    
+    result = f"✅ Import complete: {added_courses} courses, {added_instructors} instructors, {added_assignments} assignments added."
+    if errors:
+        result += f"\n\n❌ Errors ({len(errors)}):\n" + "\n".join(f"• {error}" for error in errors[:10])
+        if len(errors) > 10:
+            result += f"\n• ... and {len(errors) - 10} more errors"
+    
+    st.write(f"🎯 **Final result**: {result}")
+    
+    # Force refresh to show imported data
+    st.rerun()
+    
+    return result
 
 # =============================
 # Auth / Roles - MUST BE DEFINED BEFORE USE
@@ -763,6 +812,7 @@ if "Admin Panel" in tab_index:
 
         db = get_db()
 
+        # Create tabs for different admin functions
         admin_tabs = st.tabs([
             "👥 User Management", 
             "📚 Course Management", 
@@ -772,40 +822,68 @@ if "Admin Panel" in tab_index:
         ])
 
         with admin_tabs[0]:  # User Management
-                st.markdown("#### Add User")
-                with st.form("add_user_form"):
-                    name = st.text_input("Name")
-                    email = st.text_input("Email")
-                    role = st.selectbox("Role", ["admin", "instructor"])
-                    add_u = st.form_submit_button("Add user")
+            st.markdown("#### Add User")
+            with st.form("add_user_form"):
+                name = st.text_input("Name")
+                email = st.text_input("Email")
+                role = st.selectbox("Role", ["admin", "instructor"])
+                add_u = st.form_submit_button("Add user")
                 if add_u:
                     if not name or not email:
                         st.error("Name and email required.")
                     elif db.query(User).filter_by(email=email.lower().strip()).first():
                         st.warning("User already exists.")
                     else:
-                        db.add(User(name=name, email=email.lower().strip(), role=role)); db.commit()
+                        db.add(User(name=name, email=email.lower().strip(), role=role))
+                        db.commit()
                         st.success("User added.")
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### Current Users")
+            users = db.query(User).all()
+            if users:
+                user_data = [{"ID": u.id, "Name": u.name, "Email": u.email, "Role": u.role} for u in users]
+                st.dataframe(pd.DataFrame(user_data), width='stretch')
+            else:
+                st.info("No users in database")
 
         with admin_tabs[1]:  # Course Management
-                st.markdown("#### Add Course")
-                with st.form("add_course_form"):
-                    code = st.text_input("Course code")
-                    title = st.text_input("Course title")
-                    add_c = st.form_submit_button("Add course")
+            st.markdown("#### Add Course")
+            with st.form("add_course_form"):
+                code = st.text_input("Course code")
+                title = st.text_input("Course title")
+                add_c = st.form_submit_button("Add course")
                 if add_c:
                     if not code or not title:
                         st.error("Code and title required.")
                     elif db.query(Course).filter_by(code=code).first():
                         st.warning("Course already exists.")
                     else:
-                        db.add(Course(code=code, title=title)); db.commit()
+                        db.add(Course(code=code, title=title))
+                        db.commit()
                         st.success("Course added.")
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### Current Courses")
+            courses = db.query(Course).all()
+            if courses:
+                course_data = [{"ID": c.id, "Code": c.code, "Title": c.title} for c in courses]
+                st.dataframe(pd.DataFrame(course_data), width='stretch')
+            else:
+                st.info("No courses in database")
 
         with admin_tabs[2]:  # Assignments
             st.markdown("#### Assign Instructor to Course")
+
+            # Refresh button
+            if st.button("🔄 Refresh Lists", key="refresh_assign"):
+                st.rerun()
+
             users = db.query(User).filter_by(role="instructor").all()
             courses = db.query(Course).all()
+
             if users and courses:
                 u_sel = st.selectbox("Instructor", users, format_func=lambda u_: f"{u_.name} ({u_.email})")
                 c_sel = st.selectbox("Course", courses, format_func=lambda c: f"{c.code} — {c.title}")
@@ -814,40 +892,85 @@ if "Admin Panel" in tab_index:
                     if exists:
                         st.info("Already assigned.")
                     else:
-                        db.add(CourseInstructor(course_id=c_sel.id, user_id=u_sel.id)); db.commit()
+                        db.add(CourseInstructor(course_id=c_sel.id, user_id=u_sel.id))
+                        db.commit()
                         st.success("Assigned.")
+                        st.rerun()
             else:
-                st.info("Add at least one instructor and one course.")
+                st.info("Add at least one instructor and one course first.")
+
+            st.markdown("---")
+            st.markdown("#### Current Assignments")
+            assignments = db.query(CourseInstructor).join(Course).join(User).all()
+            if assignments:
+                assignment_data = [{"Course": a.course.code, "Instructor": a.user.name, "Email": a.user.email} for a in assignments]
+                st.dataframe(pd.DataFrame(assignment_data), width='stretch')
+            else:
+                st.info("No course assignments in database")
 
         with admin_tabs[3]:  # Bulk Import
-            st.markdown("#### Bulk Import Courses & Instructors from CSV")
+            st.markdown("#### Bulk Import Courses & Instructors")
 
+            # File upload section
             uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
             if uploaded_file:
-                df = pd.read_csv(uploaded_file)
+                df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
+
+                # normalize headers
+                df.columns = [c.strip().lower() for c in df.columns]
+
+                # robust mapping (covers your file + common variants)
+                rename_map = {
+                    "id": "course_code",
+                    "course code": "course_code",
+                    "course_code": "course_code",
+
+                    "corse title": "course_title",   # <-- your typo column
+                    "course title": "course_title",
+                    "course_title": "course_title",
+                    "title": "course_title",
+
+                    "professor": "instructor_name",
+                    "instructor name": "instructor_name",
+                    "instructor": "instructor_name",
+
+                    "email": "instructor_email",
+                    "instructor email": "instructor_email",
+                    "instructor_email": "instructor_email",
+                }
+
+                df = df.rename(columns=rename_map)
+
+                # avoid NaN -> .strip() crashes later
+                df = df.fillna("")
+
                 st.dataframe(df)
+                st.write(f"📋 File uploaded with {len(df)} rows and columns: {list(df.columns)}")
 
                 if st.button("Import Data"):
                     result = import_courses_and_instructors_from_df(df)
                     st.success(result)
+                    st.rerun()
 
-            # Or paste data directly - UPDATED TO HANDLE BOTH TAB AND COMMA
-            st.markdown("#### Or paste data directly")
+            st.markdown("---")
+            st.markdown("#### Or Paste Data Directly")
             st.markdown("""
-            **Format:** `Course Code, Course Title, Instructor Name, Instructor Email`  
-            **Separator:** Use comma (`,`) or tab  
-            **Example:**
+            **Important Notes:**
+            - **Remove the header row** (first line with column names)
+            - **Fix incomplete rows** (like the last one missing instructor data)
+            - **Format:** `Course Code, Course Title, Instructor Name, Instructor Email`
+            - **Separator:** Use comma (`,`) or tab
+
+            **Clean Example (NO HEADER):**
             ```
-            ΠΜΣ1-1,ΣΤΑΤΙΣΤΙΚΗ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ ΔΕΔΟΜΕΝΩΝ,xxxxxxxx,xxxxxx@hua.gr
-            ΠΜΣ1-2,ΜΗΧΑΝΙΚΗ ΜΑΘΗΣΗ,xxxxxxxx,xxxxxx@hua.gr
+            ΠΜΣ1-2,ΜΗΧΑΝΙΚΗ ΜΑΘΗΣΗ,XXXXXXXXXXXXXX,XXXXXXXXXXXXXX@hua.gr
+            ΠΜΣ1-3,ΕΞΟΡΥΞΗ ΔΕΔΟΜΕΝΩΝ ΚΑΙ ΣΥΣΤΗΜΑΤΑ ΣΥΣΤΑΣΕΩΝ,XXXXXXXXXX,XXXXXXXXXXXXXX@hua.gr
             ```
             """)
 
-            pasted_data = st.text_area("Paste data (comma or tab separated)", height=200, 
-                                    placeholder="Course Code, Course Title, Instructor Name, Instructor Email")
+            pasted_data = st.text_area("Paste data (comma or tab separated)", height=200)
 
-            if pasted_data and st.button("Import from text"):
-                # Parse pasted data - handle both comma and tab separation
+            if st.button("Import from text"):
                 lines = pasted_data.strip().split('\n')
                 data = []
 
@@ -856,40 +979,41 @@ if "Admin Panel" in tab_index:
                     if not line:
                         continue
 
-                    # Try comma separation first, then tab
                     if ',' in line:
-                        parts = [part.strip() for part in line.split(',')]
+                        parts = [p.strip() for p in line.split(',')]
                     elif '\t' in line:
-                        parts = [part.strip() for part in line.split('\t')]
+                        parts = [p.strip() for p in line.split('\t')]
                     else:
-                        st.warning(f"Line {i}: No separator found. Use comma or tab. Skipping: '{line}'")
+                        st.warning(f"Line {i}: No separator found. Skipping.")
                         continue
 
                     if len(parts) >= 4:
                         data.append({
                             'course_code': parts[0],
-                            'course_title': parts[1], 
+                            'course_title': parts[1],
                             'instructor_name': parts[2],
-                            'instructor_email': parts[3].lower()  # Ensure lowercase
+                            'instructor_email': parts[3].lower()
                         })
                     else:
-                        st.warning(f"Line {i}: Expected 4 columns, got {len(parts)}. Skipping: '{line}'")
+                        st.warning(f"Line {i}: Expected 4 columns, got {len(parts)}. Skipping.")
 
-                if data:
-                    df = pd.DataFrame(data)
-                    st.write("Data to be imported:")
-                    st.dataframe(df)
-
-                    if st.button("Confirm Import", type="primary"):
-                        result = import_courses_and_instructors_from_df(df)
-                        st.success(result)
-                else:
+                if not data:
                     st.error("No valid data found to import.")
-
+                else:
+                    df = pd.DataFrame(data)
+                    st.dataframe(df)
+                    result = import_courses_and_instructors_from_df(df)
+                    st.success(result)
+                    st.rerun()
 
         with admin_tabs[4]:  # Database Tools
-            st.markdown("## 🗄️ Database Management Tools")
-
+            st.markdown("#### Database Management")
+            
+            # Refresh button at the top
+            col1, col2 = st.columns([3, 1])
+            with col2:
+                if st.button("🔄 Refresh All Data", use_container_width=True):
+                    st.rerun()
             # Database Statistics
             st.markdown("### Database Overview")
             col1, col2, col3, col4 = st.columns(4)
