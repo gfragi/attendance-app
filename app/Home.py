@@ -763,418 +763,430 @@ if "Admin Panel" in tab_index:
 
         db = get_db()
 
-        st.markdown("#### Users")
-        with st.form("add_user_form"):
-            name = st.text_input("Name")
-            email = st.text_input("Email")
-            role = st.selectbox("Role", ["admin", "instructor"])
-            add_u = st.form_submit_button("Add user")
-        if add_u:
-            if not name or not email:
-                st.error("Name and email required.")
-            elif db.query(User).filter_by(email=email.lower().strip()).first():
-                st.warning("User already exists.")
-            else:
-                db.add(User(name=name, email=email.lower().strip(), role=role)); db.commit()
-                st.success("User added.")
-
-        st.markdown("#### Courses")
-        with st.form("add_course_form"):
-            code = st.text_input("Course code")
-            title = st.text_input("Course title")
-            add_c = st.form_submit_button("Add course")
-        if add_c:
-            if not code or not title:
-                st.error("Code and title required.")
-            elif db.query(Course).filter_by(code=code).first():
-                st.warning("Course already exists.")
-            else:
-                db.add(Course(code=code, title=title)); db.commit()
-                st.success("Course added.")
-
-        st.markdown("#### Assign Instructor to Course")
-        users = db.query(User).filter_by(role="instructor").all()
-        courses = db.query(Course).all()
-        if users and courses:
-            u_sel = st.selectbox("Instructor", users, format_func=lambda u_: f"{u_.name} ({u_.email})")
-            c_sel = st.selectbox("Course", courses, format_func=lambda c: f"{c.code} — {c.title}")
-            if st.button("Assign"):
-                exists = db.query(CourseInstructor).filter_by(course_id=c_sel.id, user_id=u_sel.id).first()
-                if exists:
-                    st.info("Already assigned.")
-                else:
-                    db.add(CourseInstructor(course_id=c_sel.id, user_id=u_sel.id)); db.commit()
-                    st.success("Assigned.")
-        else:
-            st.info("Add at least one instructor and one course.")
-
-            st.markdown("---")
-        st.markdown("#### Bulk Import Courses & Instructors from CSV")
-
-        uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
-        if uploaded_file:
-            df = pd.read_csv(uploaded_file)
-            st.dataframe(df)
-
-            if st.button("Import Data"):
-                result = import_courses_and_instructors_from_df(df)
-                st.success(result)
-
-        # Or paste data directly - UPDATED TO HANDLE BOTH TAB AND COMMA
-        st.markdown("#### Or paste data directly")
-        st.markdown("""
-        **Format:** `Course Code, Course Title, Instructor Name, Instructor Email`  
-        **Separator:** Use comma (`,`) or tab  
-        **Example:**
-        ```
-        ΠΜΣ1-1,ΣΤΑΤΙΣΤΙΚΗ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ ΔΕΔΟΜΕΝΩΝ,xxxxxxxx,xxxxxx@hua.gr
-        ΠΜΣ1-2,ΜΗΧΑΝΙΚΗ ΜΑΘΗΣΗ,xxxxxxxx,xxxxxx@hua.gr
-        ```
-        """)
-
-        pasted_data = st.text_area("Paste data (comma or tab separated)", height=200, 
-                                  placeholder="Course Code, Course Title, Instructor Name, Instructor Email")
-
-        if pasted_data and st.button("Import from text"):
-            # Parse pasted data - handle both comma and tab separation
-            lines = pasted_data.strip().split('\n')
-            data = []
-
-            for i, line in enumerate(lines, 1):
-                line = line.strip()
-                if not line:
-                    continue
-                    
-                # Try comma separation first, then tab
-                if ',' in line:
-                    parts = [part.strip() for part in line.split(',')]
-                elif '\t' in line:
-                    parts = [part.strip() for part in line.split('\t')]
-                else:
-                    st.warning(f"Line {i}: No separator found. Use comma or tab. Skipping: '{line}'")
-                    continue
-                
-                if len(parts) >= 4:
-                    data.append({
-                        'course_code': parts[0],
-                        'course_title': parts[1], 
-                        'instructor_name': parts[2],
-                        'instructor_email': parts[3].lower()  # Ensure lowercase
-                    })
-                else:
-                    st.warning(f"Line {i}: Expected 4 columns, got {len(parts)}. Skipping: '{line}'")
-            
-            if data:
-                df = pd.DataFrame(data)
-                st.write("Data to be imported:")
-                st.dataframe(df)
-                
-                if st.button("Confirm Import", type="primary"):
-                    result = import_courses_and_instructors_from_df(df)
-                    st.success(result)
-            else:
-                st.error("No valid data found to import.")
-
-        st.markdown("---")
-        st.markdown("## 🗄️ Database Management Tools")
-
-        # Database Statistics
-        st.markdown("### Database Overview")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            users_count = db.query(User).count()
-            st.metric("Total Users", users_count)
-        with col2:
-            courses_count = db.query(Course).count()
-            st.metric("Total Courses", courses_count)
-        with col3:
-            sessions_count = db.query(Session).count()
-            st.metric("Total Sessions", sessions_count)
-        with col4:
-            attendance_count = db.query(Attendance).count()
-            st.metric("Attendance Records", attendance_count)
-
-        # Database Management Tabs
-        db_tab1, db_tab2, db_tab3, db_tab4 = st.tabs([
-            "🗑️ Delete Records", 
-            "📊 View Data", 
-            "🔄 Cleanup Tools",
-            "⚡ Quick Actions"
+        admin_tabs = st.tabs([
+            "👥 User Management", 
+            "📚 Course Management", 
+            "🔗 Assignments", 
+            "📥 Bulk Import",
+            "🗄️ Database Tools"
         ])
 
-        with db_tab1:
-            st.markdown("### Delete Records")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### Delete by Date Range")
-                del_date_from = st.date_input("From date", key="del_from")
-                del_date_to = st.date_input("To date", key="del_to")
-                
-                if st.button("Delete Attendance Records in Range", type="secondary"):
-                    if del_date_from and del_date_to:
-                        date_from_dt = pd.Timestamp(del_date_from).tz_localize("UTC")
-                        date_to_dt = pd.Timestamp(del_date_to).tz_localize("UTC")
-                        
-                        deleted_count = db.query(Attendance).filter(
-                            Attendance.created_at >= date_from_dt,
-                            Attendance.created_at <= date_to_dt
-                        ).delete()
-                        db.commit()
-                        st.success(f"Deleted {deleted_count} attendance records")
+        with admin_tabs[0]:  # User Management
+                st.markdown("#### Add User")
+                with st.form("add_user_form"):
+                    name = st.text_input("Name")
+                    email = st.text_input("Email")
+                    role = st.selectbox("Role", ["admin", "instructor"])
+                    add_u = st.form_submit_button("Add user")
+                if add_u:
+                    if not name or not email:
+                        st.error("Name and email required.")
+                    elif db.query(User).filter_by(email=email.lower().strip()).first():
+                        st.warning("User already exists.")
                     else:
-                        st.error("Please select both date ranges")
+                        db.add(User(name=name, email=email.lower().strip(), role=role)); db.commit()
+                        st.success("User added.")
 
+        with admin_tabs[1]:  # Course Management
+                st.markdown("#### Add Course")
+                with st.form("add_course_form"):
+                    code = st.text_input("Course code")
+                    title = st.text_input("Course title")
+                    add_c = st.form_submit_button("Add course")
+                if add_c:
+                    if not code or not title:
+                        st.error("Code and title required.")
+                    elif db.query(Course).filter_by(code=code).first():
+                        st.warning("Course already exists.")
+                    else:
+                        db.add(Course(code=code, title=title)); db.commit()
+                        st.success("Course added.")
+
+        with admin_tabs[2]:  # Assignments
+            st.markdown("#### Assign Instructor to Course")
+            users = db.query(User).filter_by(role="instructor").all()
+            courses = db.query(Course).all()
+            if users and courses:
+                u_sel = st.selectbox("Instructor", users, format_func=lambda u_: f"{u_.name} ({u_.email})")
+                c_sel = st.selectbox("Course", courses, format_func=lambda c: f"{c.code} — {c.title}")
+                if st.button("Assign"):
+                    exists = db.query(CourseInstructor).filter_by(course_id=c_sel.id, user_id=u_sel.id).first()
+                    if exists:
+                        st.info("Already assigned.")
+                    else:
+                        db.add(CourseInstructor(course_id=c_sel.id, user_id=u_sel.id)); db.commit()
+                        st.success("Assigned.")
+            else:
+                st.info("Add at least one instructor and one course.")
+
+        with admin_tabs[3]:  # Bulk Import
+            st.markdown("#### Bulk Import Courses & Instructors from CSV")
+
+            uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
+            if uploaded_file:
+                df = pd.read_csv(uploaded_file)
+                st.dataframe(df)
+
+                if st.button("Import Data"):
+                    result = import_courses_and_instructors_from_df(df)
+                    st.success(result)
+
+            # Or paste data directly - UPDATED TO HANDLE BOTH TAB AND COMMA
+            st.markdown("#### Or paste data directly")
+            st.markdown("""
+            **Format:** `Course Code, Course Title, Instructor Name, Instructor Email`  
+            **Separator:** Use comma (`,`) or tab  
+            **Example:**
+            ```
+            ΠΜΣ1-1,ΣΤΑΤΙΣΤΙΚΗ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ ΔΕΔΟΜΕΝΩΝ,xxxxxxxx,xxxxxx@hua.gr
+            ΠΜΣ1-2,ΜΗΧΑΝΙΚΗ ΜΑΘΗΣΗ,xxxxxxxx,xxxxxx@hua.gr
+            ```
+            """)
+
+            pasted_data = st.text_area("Paste data (comma or tab separated)", height=200, 
+                                    placeholder="Course Code, Course Title, Instructor Name, Instructor Email")
+
+            if pasted_data and st.button("Import from text"):
+                # Parse pasted data - handle both comma and tab separation
+                lines = pasted_data.strip().split('\n')
+                data = []
+
+                for i, line in enumerate(lines, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # Try comma separation first, then tab
+                    if ',' in line:
+                        parts = [part.strip() for part in line.split(',')]
+                    elif '\t' in line:
+                        parts = [part.strip() for part in line.split('\t')]
+                    else:
+                        st.warning(f"Line {i}: No separator found. Use comma or tab. Skipping: '{line}'")
+                        continue
+
+                    if len(parts) >= 4:
+                        data.append({
+                            'course_code': parts[0],
+                            'course_title': parts[1], 
+                            'instructor_name': parts[2],
+                            'instructor_email': parts[3].lower()  # Ensure lowercase
+                        })
+                    else:
+                        st.warning(f"Line {i}: Expected 4 columns, got {len(parts)}. Skipping: '{line}'")
+
+                if data:
+                    df = pd.DataFrame(data)
+                    st.write("Data to be imported:")
+                    st.dataframe(df)
+
+                    if st.button("Confirm Import", type="primary"):
+                        result = import_courses_and_instructors_from_df(df)
+                        st.success(result)
+                else:
+                    st.error("No valid data found to import.")
+
+
+        with admin_tabs[4]:  # Database Tools
+            st.markdown("## 🗄️ Database Management Tools")
+
+            # Database Statistics
+            st.markdown("### Database Overview")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                users_count = db.query(User).count()
+                st.metric("Total Users", users_count)
             with col2:
-                st.markdown("#### Delete Specific Records")
-                
-                delete_option = st.selectbox(
-                    "What to delete?",
-                    ["Select...", "All Attendance Records", "All Sessions", "All Course Assignments", "Specific Course Data"]
+                courses_count = db.query(Course).count()
+                st.metric("Total Courses", courses_count)
+            with col3:
+                sessions_count = db.query(Session).count()
+                st.metric("Total Sessions", sessions_count)
+            with col4:
+                attendance_count = db.query(Attendance).count()
+                st.metric("Attendance Records", attendance_count)
+
+            # Database Management Tabs
+            db_tab1, db_tab2, db_tab3, db_tab4 = st.tabs([
+                "🗑️ Delete Records", 
+                "📊 View Data", 
+                "🔄 Cleanup Tools",
+                "⚡ Quick Actions"
+            ])
+
+            with db_tab1:
+                st.markdown("### Delete Records")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("#### Delete by Date Range")
+                    del_date_from = st.date_input("From date", key="del_from")
+                    del_date_to = st.date_input("To date", key="del_to")
+
+                    if st.button("Delete Attendance Records in Range", type="secondary"):
+                        if del_date_from and del_date_to:
+                            date_from_dt = pd.Timestamp(del_date_from).tz_localize("UTC")
+                            date_to_dt = pd.Timestamp(del_date_to).tz_localize("UTC")
+
+                            deleted_count = db.query(Attendance).filter(
+                                Attendance.created_at >= date_from_dt,
+                                Attendance.created_at <= date_to_dt
+                            ).delete()
+                            db.commit()
+                            st.success(f"Deleted {deleted_count} attendance records")
+                        else:
+                            st.error("Please select both date ranges")
+
+                with col2:
+                    st.markdown("#### Delete Specific Records")
+
+                    delete_option = st.selectbox(
+                        "What to delete?",
+                        ["Select...", "All Attendance Records", "All Sessions", "All Course Assignments", "Specific Course Data"]
+                    )
+
+                    if delete_option == "All Attendance Records":
+                        if st.button("Delete ALL Attendance", type="primary"):
+                            count = db.query(Attendance).count()
+                            db.query(Attendance).delete()
+                            db.commit()
+                            st.success(f"Deleted all {count} attendance records")
+
+                    elif delete_option == "All Sessions":
+                        if st.button("Delete ALL Sessions", type="primary"):
+                            # First delete attendance records to maintain foreign key constraints
+                            db.query(Attendance).delete()
+                            count = db.query(Session).count()
+                            db.query(Session).delete()
+                            db.commit()
+                            st.success(f"Deleted all {count} sessions and their attendance records")
+
+                    elif delete_option == "All Course Assignments":
+                        if st.button("Delete ALL Course Assignments", type="primary"):
+                            count = db.query(CourseInstructor).count()
+                            db.query(CourseInstructor).delete()
+                            db.commit()
+                            st.success(f"Deleted all {count} course-instructor assignments")
+
+                    elif delete_option == "Specific Course Data":
+                        courses = db.query(Course).all()
+                        course_to_delete = st.selectbox("Select course", courses, format_func=lambda c: f"{c.code} — {c.title}")
+
+                        if st.button("Delete Course Data", type="primary"):
+                            # Delete attendance for this course's sessions
+                            session_ids = [s.id for s in db.query(Session).filter_by(course_id=course_to_delete.id).all()]
+                            attendance_deleted = db.query(Attendance).filter(Attendance.session_id.in_(session_ids)).delete()
+
+                            # Delete sessions
+                            sessions_deleted = db.query(Session).filter_by(course_id=course_to_delete.id).delete()
+
+                            # Delete course assignments
+                            assignments_deleted = db.query(CourseInstructor).filter_by(course_id=course_to_delete.id).delete()
+
+                            db.commit()
+                            st.success(f"Deleted course data: {attendance_deleted} attendance, {sessions_deleted} sessions, {assignments_deleted} assignments")
+
+            with db_tab2:
+                st.markdown("### View Database Contents")
+
+                view_option = st.selectbox(
+                    "View table:",
+                    ["Users", "Courses", "Course Assignments", "Sessions", "Attendance Records"]
                 )
-                
-                if delete_option == "All Attendance Records":
-                    if st.button("Delete ALL Attendance", type="primary"):
+
+                if view_option == "Users":
+                    users = db.query(User).all()
+                    if users:
+                        data = [{"ID": u.id, "Name": u.name, "Email": u.email, "Role": u.role} for u in users]
+                        st.dataframe(pd.DataFrame(data), width='stretch')
+                    else:
+                        st.info("No users in database")
+
+                elif view_option == "Courses":
+                    courses = db.query(Course).all()
+                    if courses:
+                        data = [{"ID": c.id, "Code": c.code, "Title": c.title} for c in courses]
+                        st.dataframe(pd.DataFrame(data), width='stretch')
+                    else:
+                        st.info("No courses in database")
+
+                elif view_option == "Course Assignments":
+                    assignments = db.query(CourseInstructor).join(Course).join(User).all()
+                    if assignments:
+                        data = [{"Course": a.course.code, "Instructor": a.user.name, "Email": a.user.email} for a in assignments]
+                        st.dataframe(pd.DataFrame(data), width='stretch')
+                    else:
+                        st.info("No course assignments in database")
+
+                elif view_option == "Sessions":
+                    sessions = db.query(Session).join(Course).all()
+                    if sessions:
+                        data = [{
+                            "ID": s.id, 
+                            "Course": s.course.code,
+                            "Start": fmt_local(s.start_time),
+                            "End": fmt_local(s.end_time),
+                            "Open": s.is_open,
+                            "Expires": fmt_local(s.expires_at)
+                        } for s in sessions]
+                        st.dataframe(pd.DataFrame(data), width='stretch')
+                    else:
+                        st.info("No sessions in database")
+
+                elif view_option == "Attendance Records":
+                    attendance = db.query(Attendance).join(Session).join(Course).limit(1000).all()  # Limit for performance
+                    if attendance:
+                        data = [{
+                            "ID": a.id,
+                            "Course": a.session.course.code,
+                            "Student": a.student_name,
+                            "Email": a.student_email,
+                            "Checked In": fmt_local(a.created_at)
+                        } for a in attendance]
+                        st.dataframe(pd.DataFrame(data), width='stretch')
+                        st.info(f"Showing first 1000 records. Total: {db.query(Attendance).count()}")
+                    else:
+                        st.info("No attendance records in database")
+
+            with db_tab3:
+                st.markdown("### Database Cleanup Tools")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("#### Close Old Sessions")
+                    if st.button("Close All Expired Sessions"):
+                        now = now_utc()
+                        expired_sessions = db.query(Session).filter(
+                            Session.is_open == True,
+                            Session.expires_at < now
+                        ).all()
+
+                        for session in expired_sessions:
+                            session.is_open = False
+                            session.end_time = now
+
+                        db.commit()
+                        st.success(f"Closed {len(expired_sessions)} expired sessions")
+
+                    st.markdown("#### Remove Orphaned Records")
+                    if st.button("Clean Orphaned Records"):
+                        # Remove attendance without sessions
+                        orphaned_attendance = db.query(Attendance).filter(
+                            ~Attendance.session_id.in_(db.query(Session.id))
+                        ).delete()
+
+                        # Remove sessions without courses
+                        orphaned_sessions = db.query(Session).filter(
+                            ~Session.course_id.in_(db.query(Course.id))
+                        ).delete()
+
+                        # Remove assignments without courses or users
+                        orphaned_assignments = db.query(CourseInstructor).filter(
+                            ~CourseInstructor.course_id.in_(db.query(Course.id)) |
+                            ~CourseInstructor.user_id.in_(db.query(User.id))
+                        ).delete()
+
+                        db.commit()
+                        st.success(f"Cleaned: {orphaned_attendance} attendance, {orphaned_sessions} sessions, {orphaned_assignments} assignments")
+
+                with col2:
+                    st.markdown("#### Export Database Backup")
+                    if st.button("Export Full Backup"):
+                        # Export all tables to CSV
+                        tables = {
+                            "users": db.query(User),
+                            "courses": db.query(Course),
+                            "course_assignments": db.query(CourseInstructor),
+                            "sessions": db.query(Session),
+                            "attendance": db.query(Attendance)
+                        }
+
+                        # Create zip file with all CSVs
+                        import zipfile
+                        from io import BytesIO
+
+                        zip_buffer = BytesIO()
+                        with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+                            for table_name, query in tables.items():
+                                data = [dict(row.__dict__) for row in query.all()]
+                                for item in data:
+                                    item.pop('_sa_instance_state', None)  # Remove SQLAlchemy internal
+                                df = pd.DataFrame(data)
+                                csv_buffer = BytesIO()
+                                df.to_csv(csv_buffer, index=False, encoding='utf-8')
+                                zip_file.writestr(f"{table_name}.csv", csv_buffer.getvalue())
+
+                        st.download_button(
+                            "Download Backup ZIP",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"attendance_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
+                            mime="application/zip"
+                        )
+
+            with db_tab4:
+                st.markdown("### Quick Actions")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button("🔄 Reset Demo Data", help="Keep only admin users, delete all other data"):
+                        # Keep admin users
+                        admin_emails = list(ADMIN_EMAILS)
+                        db.query(User).filter(~User.email.in_(admin_emails)).delete()
+
+                        # Delete all other data
+                        db.query(Attendance).delete()
+                        db.query(Session).delete()
+                        db.query(CourseInstructor).delete()
+                        db.query(Course).delete()
+
+                        db.commit()
+                        st.success("Demo data reset - only admin users remain")
+
+                    if st.button("🧹 Clear All Attendance", type="secondary"):
                         count = db.query(Attendance).count()
                         db.query(Attendance).delete()
                         db.commit()
-                        st.success(f"Deleted all {count} attendance records")
-                        
-                elif delete_option == "All Sessions":
-                    if st.button("Delete ALL Sessions", type="primary"):
-                        # First delete attendance records to maintain foreign key constraints
-                        db.query(Attendance).delete()
-                        count = db.query(Session).count()
-                        db.query(Session).delete()
-                        db.commit()
-                        st.success(f"Deleted all {count} sessions and their attendance records")
-                        
-                elif delete_option == "All Course Assignments":
-                    if st.button("Delete ALL Course Assignments", type="primary"):
-                        count = db.query(CourseInstructor).count()
-                        db.query(CourseInstructor).delete()
-                        db.commit()
-                        st.success(f"Deleted all {count} course-instructor assignments")
-                        
-                elif delete_option == "Specific Course Data":
-                    courses = db.query(Course).all()
-                    course_to_delete = st.selectbox("Select course", courses, format_func=lambda c: f"{c.code} — {c.title}")
-                    
-                    if st.button("Delete Course Data", type="primary"):
-                        # Delete attendance for this course's sessions
-                        session_ids = [s.id for s in db.query(Session).filter_by(course_id=course_to_delete.id).all()]
-                        attendance_deleted = db.query(Attendance).filter(Attendance.session_id.in_(session_ids)).delete()
-                        
-                        # Delete sessions
-                        sessions_deleted = db.query(Session).filter_by(course_id=course_to_delete.id).delete()
-                        
-                        # Delete course assignments
-                        assignments_deleted = db.query(CourseInstructor).filter_by(course_id=course_to_delete.id).delete()
-                        
-                        db.commit()
-                        st.success(f"Deleted course data: {attendance_deleted} attendance, {sessions_deleted} sessions, {assignments_deleted} assignments")
+                        st.success(f"Cleared all {count} attendance records")
 
-        with db_tab2:
-            st.markdown("### View Database Contents")
-            
-            view_option = st.selectbox(
-                "View table:",
-                ["Users", "Courses", "Course Assignments", "Sessions", "Attendance Records"]
-            )
-            
-            if view_option == "Users":
-                users = db.query(User).all()
-                if users:
-                    data = [{"ID": u.id, "Name": u.name, "Email": u.email, "Role": u.role} for u in users]
-                    st.dataframe(pd.DataFrame(data), width='stretch')
-                else:
-                    st.info("No users in database")
-                    
-            elif view_option == "Courses":
-                courses = db.query(Course).all()
-                if courses:
-                    data = [{"ID": c.id, "Code": c.code, "Title": c.title} for c in courses]
-                    st.dataframe(pd.DataFrame(data), width='stretch')
-                else:
-                    st.info("No courses in database")
-                    
-            elif view_option == "Course Assignments":
-                assignments = db.query(CourseInstructor).join(Course).join(User).all()
-                if assignments:
-                    data = [{"Course": a.course.code, "Instructor": a.user.name, "Email": a.user.email} for a in assignments]
-                    st.dataframe(pd.DataFrame(data), width='stretch')
-                else:
-                    st.info("No course assignments in database")
-                    
-            elif view_option == "Sessions":
-                sessions = db.query(Session).join(Course).all()
-                if sessions:
-                    data = [{
-                        "ID": s.id, 
-                        "Course": s.course.code,
-                        "Start": fmt_local(s.start_time),
-                        "End": fmt_local(s.end_time),
-                        "Open": s.is_open,
-                        "Expires": fmt_local(s.expires_at)
-                    } for s in sessions]
-                    st.dataframe(pd.DataFrame(data), width='stretch')
-                else:
-                    st.info("No sessions in database")
-                    
-            elif view_option == "Attendance Records":
-                attendance = db.query(Attendance).join(Session).join(Course).limit(1000).all()  # Limit for performance
-                if attendance:
-                    data = [{
-                        "ID": a.id,
-                        "Course": a.session.course.code,
-                        "Student": a.student_name,
-                        "Email": a.student_email,
-                        "Checked In": fmt_local(a.created_at)
-                    } for a in attendance]
-                    st.dataframe(pd.DataFrame(data), width='stretch')
-                    st.info(f"Showing first 1000 records. Total: {db.query(Attendance).count()}")
-                else:
-                    st.info("No attendance records in database")
+                with col2:
+                    if st.button("📝 Recreate Database Schema", type="secondary", help="WARNING: This will delete ALL data"):
+                        if st.checkbox("I understand this will DELETE ALL DATA"):
+                            if st.button("CONFIRM RECREATE DATABASE", type="primary"):
+                                Base.metadata.drop_all(engine)
+                                Base.metadata.create_all(engine)
+                                st.success("Database schema recreated - ALL DATA DELETED")
 
-        with db_tab3:
-            st.markdown("### Database Cleanup Tools")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### Close Old Sessions")
-                if st.button("Close All Expired Sessions"):
-                    now = now_utc()
-                    expired_sessions = db.query(Session).filter(
-                        Session.is_open == True,
-                        Session.expires_at < now
-                    ).all()
-                    
-                    for session in expired_sessions:
-                        session.is_open = False
-                        session.end_time = now
-                    
-                    db.commit()
-                    st.success(f"Closed {len(expired_sessions)} expired sessions")
-                
-                st.markdown("#### Remove Orphaned Records")
-                if st.button("Clean Orphaned Records"):
-                    # Remove attendance without sessions
-                    orphaned_attendance = db.query(Attendance).filter(
-                        ~Attendance.session_id.in_(db.query(Session.id))
-                    ).delete()
-                    
-                    # Remove sessions without courses
-                    orphaned_sessions = db.query(Session).filter(
-                        ~Session.course_id.in_(db.query(Course.id))
-                    ).delete()
-                    
-                    # Remove assignments without courses or users
-                    orphaned_assignments = db.query(CourseInstructor).filter(
-                        ~CourseInstructor.course_id.in_(db.query(Course.id)) |
-                        ~CourseInstructor.user_id.in_(db.query(User.id))
-                    ).delete()
-                    
-                    db.commit()
-                    st.success(f"Cleaned: {orphaned_attendance} attendance, {orphaned_sessions} sessions, {orphaned_assignments} assignments")
-            
-            with col2:
-                st.markdown("#### Export Database Backup")
-                if st.button("Export Full Backup"):
-                    # Export all tables to CSV
-                    tables = {
-                        "users": db.query(User),
-                        "courses": db.query(Course),
-                        "course_assignments": db.query(CourseInstructor),
-                        "sessions": db.query(Session),
-                        "attendance": db.query(Attendance)
-                    }
-                    
-                    # Create zip file with all CSVs
-                    import zipfile
-                    from io import BytesIO
-                    
-                    zip_buffer = BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
-                        for table_name, query in tables.items():
-                            data = [dict(row.__dict__) for row in query.all()]
-                            for item in data:
-                                item.pop('_sa_instance_state', None)  # Remove SQLAlchemy internal
-                            df = pd.DataFrame(data)
-                            csv_buffer = BytesIO()
-                            df.to_csv(csv_buffer, index=False, encoding='utf-8')
-                            zip_file.writestr(f"{table_name}.csv", csv_buffer.getvalue())
-                    
-                    st.download_button(
-                        "Download Backup ZIP",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"attendance_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-                        mime="application/zip"
-                    )
+                    if st.button("🔍 Database Integrity Check"):
+                        # Check foreign key constraints
+                        issues = []
 
-        with db_tab4:
-            st.markdown("### Quick Actions")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("🔄 Reset Demo Data", help="Keep only admin users, delete all other data"):
-                    # Keep admin users
-                    admin_emails = list(ADMIN_EMAILS)
-                    db.query(User).filter(~User.email.in_(admin_emails)).delete()
-                    
-                    # Delete all other data
-                    db.query(Attendance).delete()
-                    db.query(Session).delete()
-                    db.query(CourseInstructor).delete()
-                    db.query(Course).delete()
-                    
-                    db.commit()
-                    st.success("Demo data reset - only admin users remain")
-                
-                if st.button("🧹 Clear All Attendance", type="secondary"):
-                    count = db.query(Attendance).count()
-                    db.query(Attendance).delete()
-                    db.commit()
-                    st.success(f"Cleared all {count} attendance records")
-            
-            with col2:
-                if st.button("📝 Recreate Database Schema", type="secondary", help="WARNING: This will delete ALL data"):
-                    if st.checkbox("I understand this will DELETE ALL DATA"):
-                        if st.button("CONFIRM RECREATE DATABASE", type="primary"):
-                            Base.metadata.drop_all(engine)
-                            Base.metadata.create_all(engine)
-                            st.success("Database schema recreated - ALL DATA DELETED")
-                
-                if st.button("🔍 Database Integrity Check"):
-                    # Check foreign key constraints
-                    issues = []
-                    
-                    # Check attendance without sessions
-                    orphaned_attendance = db.query(Attendance).filter(
-                        ~Attendance.session_id.in_(db.query(Session.id))
-                    ).count()
-                    if orphaned_attendance > 0:
-                        issues.append(f"{orphaned_attendance} attendance records without sessions")
-                    
-                    # Check sessions without courses
-                    orphaned_sessions = db.query(Session).filter(
-                        ~Session.course_id.in_(db.query(Course.id))
-                    ).count()
-                    if orphaned_sessions > 0:
-                        issues.append(f"{orphaned_sessions} sessions without courses")
-                    
-                    if issues:
-                        st.error("Database issues found:")
-                        for issue in issues:
-                            st.write(f"• {issue}")
-                    else:
-                        st.success("✅ Database integrity check passed")
+                        # Check attendance without sessions
+                        orphaned_attendance = db.query(Attendance).filter(
+                            ~Attendance.session_id.in_(db.query(Session.id))
+                        ).count()
+                        if orphaned_attendance > 0:
+                            issues.append(f"{orphaned_attendance} attendance records without sessions")
 
-        # Add warning for destructive operations
-        st.markdown("---")
-        st.warning("⚠️ **Warning**: Database management operations are destructive and cannot be undone. Always backup your data before performing delete operations.")
+                        # Check sessions without courses
+                        orphaned_sessions = db.query(Session).filter(
+                            ~Session.course_id.in_(db.query(Course.id))
+                        ).count()
+                        if orphaned_sessions > 0:
+                            issues.append(f"{orphaned_sessions} sessions without courses")
+
+                        if issues:
+                            st.error("Database issues found:")
+                            for issue in issues:
+                                st.write(f"• {issue}")
+                        else:
+                            st.success("✅ Database integrity check passed")
+
+            # Add warning for destructive operations
+            st.markdown("---")
+            st.warning("⚠️ **Warning**: Database management operations are destructive and cannot be undone. Always backup your data before performing delete operations.")
 
 
 # --- Admin Reports (Admin) ---
