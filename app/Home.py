@@ -47,7 +47,7 @@ def parse_email_list(env_var_name, default=""):
     return emails
 
 ADMIN_EMAILS = parse_email_list("ADMIN_EMAILS", "gfragi@hua.gr")
-INSTRUCTOR_EMAILS = parse_email_list("INSTRUCTOR_EMAILS", "gfragi@hua.gr")
+INSTRUCTOR_EMAILS = parse_email_list("INSTRUCTOR_EMAILS", "")
 
 AUTH_MODE = os.getenv("AUTH_MODE", "manual").strip().lower()
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "yes", "on")
@@ -107,8 +107,54 @@ Base.metadata.create_all(engine)
 # =============================
 # Helper Functions
 # =============================
+
+def bootstrap_env_users():
+    db = get_db()
+
+    # seed admins from env
+    for email in ADMIN_EMAILS:
+        if not email:
+            continue
+        u = db.query(User).filter_by(email=email).first()
+        if not u:
+            db.add(User(
+                name=email_to_display_name(email),
+                email=email,
+                role="admin"
+            ))
+        else:
+            # if they exist but not admin, upgrade
+            if u.role != "admin":
+                u.role = "admin"
+
+    # OPTIONAL: seed instructors from env once (if you want)
+    for email in INSTRUCTOR_EMAILS:
+        if not email or email in ADMIN_EMAILS:
+            continue
+        u = db.query(User).filter_by(email=email).first()
+        if not u:
+            db.add(User(
+                name=email_to_display_name(email),
+                email=email,
+                role="instructor"
+            ))
+        else:
+            if u.role not in ("admin", "instructor"):
+                u.role = "instructor"
+
+    db.commit()
+
+
 def get_db():
     return SessionLocal()
+
+def get_user_role_from_db(email: str) -> str | None:
+    if not email:
+        return None
+    db = get_db()
+    u = db.query(User).filter_by(email=email.lower().strip()).first()
+    return u.role if u else None
+
 
 def now_utc():
     return datetime.now(timezone.utc)
@@ -244,36 +290,36 @@ def import_courses_and_instructors_from_df(df: pd.DataFrame) -> str:
     added_instructors = 0
     added_assignments = 0
     errors = []
-    
+
     st.write("🔍 **DEBUG: Starting import process**")
-    
+
     for idx, row in df.iterrows():
         try:
             course_code = str(row.get('course_code', '')).strip()
             course_title = str(row.get('course_title', '')).strip()
             instructor_name = str(row.get('instructor_name', '')).strip()
             instructor_email = str(row.get('instructor_email', '')).strip().lower()
-            
+
             st.write(f"🔍 Processing row {idx+1}: '{course_code}', '{course_title}', '{instructor_name}', '{instructor_email}'")
-            
+
             # Skip header row or empty rows
             if course_code.lower() == 'course_code' and course_title.lower() == 'course_title':
                 st.write(f"⏭️ Skipping header row {idx+1}")
                 continue
-                
+
             # Validate required fields
             if not all([course_code, course_title, instructor_name, instructor_email]):
                 error_msg = f"Row {idx+1}: Missing required fields"
                 errors.append(error_msg)
                 st.write(f"❌ {error_msg}")
                 continue
-            
+
             if not instructor_email.endswith('@hua.gr'):
                 error_msg = f"Row {idx+1}: Instructor email must be @hua.gr - {instructor_email}"
                 errors.append(error_msg)
                 st.write(f"❌ {error_msg}")
                 continue
-            
+
             # Add or get course
             course = db.query(Course).filter_by(code=course_code).first()
             if not course:
@@ -284,7 +330,7 @@ def import_courses_and_instructors_from_df(df: pd.DataFrame) -> str:
                 st.write(f"✅ Added new course: {course_code}")
             else:
                 st.write(f"ℹ️ Course already exists: {course_code}")
-            
+
             # Add or get instructor user
             user = db.query(User).filter_by(email=instructor_email).first()
             if not user:
@@ -443,16 +489,28 @@ def current_user():
     return u
 
 def is_admin(email: str) -> bool:
-    """Check if email is in admin list (case-insensitive)"""
     if not email:
         return False
-    return email.lower() in ADMIN_EMAILS
+    email = email.lower().strip()
+
+    # env admins always allowed (bootstrap)
+    if email in ADMIN_EMAILS:
+        return True
+
+    # otherwise trust DB
+    return get_user_role_from_db(email) == "admin"
 
 def is_instructor(email: str) -> bool:
-    """Check if email is in instructor list or is admin (case-insensitive)"""
     if not email:
         return False
-    return email.lower() in INSTRUCTOR_EMAILS or is_admin(email)
+    email = email.lower().strip()
+
+    # admins are instructors too
+    if is_admin(email):
+        return True
+
+    # DB is source of truth
+    return get_user_role_from_db(email) == "instructor"
 
 def debug_auth_comprehensive():
     """Comprehensive auth debugging - only shown when DEBUG_MODE=True"""

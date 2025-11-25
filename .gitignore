@@ -1,5 +1,4 @@
 attend_venv/
-data/attendance.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -217,3 +216,4 @@ __marimo__/
 !.env.prod.example
 .env.prod
 
+data/attendance.db
