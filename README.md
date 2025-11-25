@@ -106,7 +106,19 @@ Example views:
 
 Accessible from the Admin Panel tab.
 
-## 1. Manage Users
+### 0. Roles & Access Control
+
+- **Admins** are bootstrapped from the environment variable `ADMIN_EMAILS`.
+  On startup, these emails are synced into the `users` table with role `admin`.
+- **Instructors** are managed in the database (`users.role = instructor`).
+  Add instructors via:
+  1) Admin Panel → User Management, or  
+  2) Bulk Import (CSV).
+
+Environment instructor lists (if present) are used only for optional initial seeding.
+The database remains the source of truth for instructor access.
+
+### 1. Manage Users
 
 Add new:
 
@@ -121,7 +133,26 @@ Add new courses (e.g., EFP01 — Software Development I).
 
 Link instructors to courses using the dropdown menus.
 
-### 4. Global Reports
+### 4. Bulk Import (CSV)
+
+The Bulk Import expects 4 fields:
+
+| Field | Accepted headers |
+|------|------------------|
+| Course code | `course_code`, `course code`, `id` |
+| Course title | `course_title`, `course title`, `corse title` |
+| Instructor name | `instructor_name`, `instructor name`, `professor` |
+| Instructor email | `instructor_email`, `instructor email`, `email` |
+
+Example CSV:
+
+```csv
+id,corse title,professor,email
+ΠΜΣ1-1,ΣΤΑΤΙΣΤΙΚΗ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ ΔΕΔΟΜΕΝΩΝ, <instructor name>, <instructor email>
+ΠΜΣ1-2,ΜΗΧΑΝΙΚΗ ΜΑΘΗΣΗ, <instructor name>, <instructor email>
+```
+
+### 5. Global Reports
 
 Under Reports (Admin):
 
