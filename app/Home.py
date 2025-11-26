@@ -512,36 +512,36 @@ def is_instructor(email: str) -> bool:
     # DB is source of truth
     return get_user_role_from_db(email) == "instructor"
 
-def debug_auth_comprehensive():
-    """Comprehensive auth debugging - only shown when DEBUG_MODE=True"""
-    if not DEBUG_MODE:
-        return True  # Return True to continue with auth check
+# def debug_auth_comprehensive():
+#     """Comprehensive auth debugging - only shown when DEBUG_MODE=True"""
+#     if not DEBUG_MODE:
+#         return True  # Return True to continue with auth check
     
-    st.sidebar.markdown("### 🔍 Auth Debug Info")
+#     st.sidebar.markdown("### 🔍 Auth Debug Info")
     
-    # Get all headers
-    headers = get_headers()
-    st.sidebar.markdown("#### Headers Received:")
-    for key, value in headers.items():
-        if any(auth_key in key.lower() for auth_key in ['auth', 'user', 'email', 'x-']):
-            st.sidebar.write(f"**{key}**: {value}")
+#     # Get all headers
+#     headers = get_headers()
+#     st.sidebar.markdown("#### Headers Received:")
+#     for key, value in headers.items():
+#         if any(auth_key in key.lower() for auth_key in ['auth', 'user', 'email', 'x-']):
+#             st.sidebar.write(f"**{key}**: {value}")
     
-    # Current user info
-    u = current_user()
-    st.sidebar.markdown("#### Current User:")
-    st.sidebar.write(f"Email: `{u['email']}`")
-    st.sidebar.write(f"Name: `{u['name']}`")
+#     # Current user info
+#     u = current_user()
+#     st.sidebar.markdown("#### Current User:")
+#     st.sidebar.write(f"Email: `{u['email']}`")
+#     st.sidebar.write(f"Name: `{u['name']}`")
     
-    # Query params
-    st.sidebar.markdown("#### Query Parameters:")
-    st.sidebar.write(dict(st.query_params))
+#     # Query params
+#     st.sidebar.markdown("#### Query Parameters:")
+#     st.sidebar.write(dict(st.query_params))
     
-    # Check if user is authenticated
-    is_auth = bool(u['email'])
-    st.sidebar.markdown("#### Authentication Status:")
-    st.sidebar.write(f"Authenticated: **{'✅ YES' if is_auth else '❌ NO'}**")
+#     # Check if user is authenticated
+#     is_auth = bool(u['email'])
+#     st.sidebar.markdown("#### Authentication Status:")
+#     st.sidebar.write(f"Authenticated: **{'✅ YES' if is_auth else '❌ NO'}**")
     
-    return is_auth
+#     return is_auth
 
 # =============================
 # Page Setup - NOW SAFE TO CALL current_user()
@@ -563,24 +563,24 @@ if need_identity():
     st.stop()
 
 # Call debug (will only show if debug mode is enabled)
-debug_auth_comprehensive()
+# debug_auth_comprehensive()
 
 # =============================
 # Role Debug Info - NOW u_email IS DEFINED
 # =============================
-if DEBUG_MODE:
-    st.sidebar.markdown("### 👥 Role Debug Info")
-    st.sidebar.write(f"Admin emails: {list(ADMIN_EMAILS)}")
-    st.sidebar.write(f"Instructor emails: {list(INSTRUCTOR_EMAILS)}")
-    st.sidebar.write(f"Your email: `{u_email}`")
-    st.sidebar.write(f"Is admin: **{'✅ YES' if is_admin(u_email) else '❌ NO'}**")
-    st.sidebar.write(f"Is instructor: **{'✅ YES' if is_instructor(u_email) else '❌ NO'}**")
+# if DEBUG_MODE:
+#     st.sidebar.markdown("### 👥 Role Debug Info")
+#     st.sidebar.write(f"Admin emails: {list(ADMIN_EMAILS)}")
+#     st.sidebar.write(f"Instructor emails: {list(INSTRUCTOR_EMAILS)}")
+#     st.sidebar.write(f"Your email: `{u_email}`")
+#     st.sidebar.write(f"Is admin: **{'✅ YES' if is_admin(u_email) else '❌ NO'}**")
+#     st.sidebar.write(f"Is instructor: **{'✅ YES' if is_instructor(u_email) else '❌ NO'}**")
 
-    # Debug current role access
-    st.sidebar.markdown("### 🔧 Current Access")
-    st.sidebar.write(f"Can see Instructor Panel: {is_instructor(u_email)}")
-    st.sidebar.write(f"Can see Admin Panel: {is_admin(u_email)}")
-    st.sidebar.write(f"Can see Reports: {is_admin(u_email)}")
+#     # Debug current role access
+#     st.sidebar.markdown("### 🔧 Current Access")
+#     st.sidebar.write(f"Can see Instructor Panel: {is_instructor(u_email)}")
+#     st.sidebar.write(f"Can see Admin Panel: {is_admin(u_email)}")
+#     st.sidebar.write(f"Can see Reports: {is_admin(u_email)}")
 
 
 # =============================
